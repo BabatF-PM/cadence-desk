@@ -570,8 +570,11 @@ export default function App() {
     return saved === "unassigned";
   });
 
-  const isAuthenticated = !isGuestMode && !!currentUserEmail && currentUserEmail !== "unassigned";
-  const currentUser = isAuthenticated ? currentUserEmail : null;
+  // Treat user as authenticated if they have a standard profile OR an active Google session
+  const isAuthenticated = (!isGuestMode && !!currentUserEmail && currentUserEmail !== "unassigned") || !!driveUser || !!driveAccessToken;
+
+  // Resolve the active email for the UI, falling back to Google Drive user email
+  const currentUser = isAuthenticated ? (currentUserEmail !== "unassigned" ? currentUserEmail : driveUser?.email || "user") : null;
 
   // Restore Session on Mount from app_session_user
   useEffect(() => {
@@ -2197,7 +2200,7 @@ export default function App() {
         driveAccessToken ||
         (typeof localStorage !== "undefined" ? localStorage.getItem("gcal_access_token") : null) ||
         (typeof localStorage !== "undefined" ? localStorage.getItem("google_access_token") : null);
-
+      console.log("DEBUG: Token being sent to API:", tokenToPass);
       try {
         response = await fetch("/api/send-email", {
           method: "POST",
@@ -2990,8 +2993,8 @@ ${followUpStr}
                           initial={{ opacity: 0, y: -5 }}
                           animate={{ opacity: 1, y: 0 }}
                           className={`text-[10px] p-2.5 rounded-lg border font-semibold flex items-start gap-1.5 text-left leading-normal ${importFeedback.type === "success"
-                              ? "bg-emerald-50 border-emerald-100 text-emerald-800"
-                              : "bg-red-50 border-red-100 text-red-800"
+                            ? "bg-emerald-50 border-emerald-100 text-emerald-800"
+                            : "bg-red-50 border-red-100 text-red-800"
                             }`}
                         >
                           {importFeedback.type === "success" ? (
@@ -3174,8 +3177,8 @@ ${followUpStr}
                     <div
                       key={a.id}
                       className={`flex items-center justify-between p-2 rounded-lg border transition-all ${a.isHost
-                          ? "bg-indigo-50/50 border-indigo-100 text-indigo-950"
-                          : "bg-white border-slate-150 hover:border-slate-300"
+                        ? "bg-indigo-50/50 border-indigo-100 text-indigo-950"
+                        : "bg-white border-slate-150 hover:border-slate-300"
                         }`}
                     >
                       <div className="flex items-center gap-2">
@@ -3183,8 +3186,8 @@ ${followUpStr}
                           onClick={() => handleSetHost(a.id)}
                           title={a.isHost ? "Meeting Host (Core Zone)" : "Click to set as Host"}
                           className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${a.isHost
-                              ? "bg-indigo-600 text-white"
-                              : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-750"
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-750"
                             }`}
                         >
                           {a.isHost ? "Host" : "Guest"}
@@ -3259,8 +3262,8 @@ ${followUpStr}
                     }
                   }}
                   className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${isFileDragging
-                      ? "border-indigo-500 bg-indigo-50/50 shadow-inner"
-                      : "border-slate-200 bg-slate-50/20 hover:bg-slate-50/50 hover:border-indigo-300"
+                    ? "border-indigo-500 bg-indigo-50/50 shadow-inner"
+                    : "border-slate-200 bg-slate-50/20 hover:bg-slate-50/50 hover:border-indigo-300"
                     }`}
                 >
                   <input
@@ -3446,8 +3449,8 @@ ${followUpStr}
                       type="button"
                       onClick={() => setAuraTone("standard")}
                       className={`text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer text-center ${auraTone === "standard"
-                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                         }`}
                     >
                       Standard
@@ -3456,8 +3459,8 @@ ${followUpStr}
                       type="button"
                       onClick={() => setAuraTone("detailed")}
                       className={`text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer text-center ${auraTone === "detailed"
-                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                         }`}
                     >
                       Exhaustive
@@ -3466,8 +3469,8 @@ ${followUpStr}
                       type="button"
                       onClick={() => setAuraTone("high_priority")}
                       className={`text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer text-center ${auraTone === "high_priority"
-                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                         }`}
                     >
                       High-Priority
@@ -3688,8 +3691,8 @@ ${followUpStr}
                     <button
                       onClick={() => setActiveTab("agents")}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "agents"
-                          ? "bg-indigo-600 text-white shadow-sm font-extrabold"
-                          : "text-indigo-600 hover:text-indigo-900 hover:bg-white/45 font-bold bg-indigo-50/40"
+                        ? "bg-indigo-600 text-white shadow-sm font-extrabold"
+                        : "text-indigo-600 hover:text-indigo-900 hover:bg-white/45 font-bold bg-indigo-50/40"
                         }`}
                     >
                       <Bot className="w-3.5 h-3.5" />
@@ -3698,8 +3701,8 @@ ${followUpStr}
                     <button
                       onClick={() => setActiveTab("recap")}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "recap"
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
                         }`}
                     >
                       <FileText className="w-3.5 h-3.5" />
@@ -3708,8 +3711,8 @@ ${followUpStr}
                     <button
                       onClick={() => setActiveTab("overlap")}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "overlap"
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
                         }`}
                     >
                       <Globe className="w-3.5 h-3.5" />
@@ -3718,8 +3721,8 @@ ${followUpStr}
                     <button
                       onClick={() => setActiveTab("calendar")}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "calendar"
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
                         }`}
                     >
                       <Calendar className="w-3.5 h-3.5" />
@@ -3728,8 +3731,8 @@ ${followUpStr}
                     <button
                       onClick={() => setActiveTab("email")}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "email"
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
                         }`}
                     >
                       <Mail className="w-3.5 h-3.5" />
@@ -3744,8 +3747,8 @@ ${followUpStr}
                         }
                       }}
                       className={`flex-1 min-w-[110px] px-2.5 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${activeTab === "threads"
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-white/45"
                         }`}
                     >
                       <History className="w-3.5 h-3.5" />
@@ -3832,10 +3835,10 @@ ${followUpStr}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 relative">
                             {/* Step 1: Aura */}
                             <div className={`flex items-start gap-3 p-2.5 rounded-lg border transition-all text-left ${auraStatus === "running" ? "bg-indigo-50/40 border-indigo-300 shadow-xs" :
-                                auraStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
+                              auraStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
                               }`}>
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${auraStatus === "completed" ? "bg-emerald-500 text-white" :
-                                  auraStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
+                                auraStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
                                 }`}>
                                 {auraStatus === "completed" ? <Check className="w-3 h-3 stroke-[3]" /> : "01"}
                               </div>
@@ -3850,10 +3853,10 @@ ${followUpStr}
 
                             {/* Step 2: Chronos */}
                             <div className={`flex items-start gap-3 p-2.5 rounded-lg border transition-all text-left ${chronosStatus === "running" ? "bg-indigo-50/40 border-indigo-300 shadow-xs" :
-                                chronosStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
+                              chronosStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
                               }`}>
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${chronosStatus === "completed" ? "bg-emerald-500 text-white" :
-                                  chronosStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
+                                chronosStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
                                 }`}>
                                 {chronosStatus === "completed" ? <Check className="w-3 h-3 stroke-[3]" /> : "02"}
                               </div>
@@ -3868,10 +3871,10 @@ ${followUpStr}
 
                             {/* Step 3: Scribe */}
                             <div className={`flex items-start gap-3 p-2.5 rounded-lg border transition-all text-left ${scribeStatus === "running" ? "bg-indigo-50/40 border-indigo-300 shadow-xs" :
-                                scribeStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
+                              scribeStatus === "completed" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
                               }`}>
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${scribeStatus === "completed" ? "bg-emerald-500 text-white" :
-                                  scribeStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
+                                scribeStatus === "running" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
                                 }`}>
                                 {scribeStatus === "completed" ? <Check className="w-3 h-3 stroke-[3]" /> : "03"}
                               </div>
@@ -3886,10 +3889,10 @@ ${followUpStr}
 
                             {/* Step 4: SMTP Send */}
                             <div className={`flex items-start gap-3 p-2.5 rounded-lg border transition-all text-left ${smtpStatus === "sending" ? "bg-indigo-50/40 border-indigo-300 shadow-xs" :
-                                smtpStatus === "sent" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
+                              smtpStatus === "sent" ? "bg-emerald-50/25 border-emerald-200 opacity-90" : "bg-white border-slate-200/80"
                               }`}>
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${smtpStatus === "sent" ? "bg-emerald-500 text-white" :
-                                  smtpStatus === "sending" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
+                                smtpStatus === "sending" ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-100 text-slate-500"
                                 }`}>
                                 {smtpStatus === "sent" ? <Check className="w-3 h-3 stroke-[3]" /> : "04"}
                               </div>
@@ -3958,8 +3961,8 @@ ${followUpStr}
                                     key={index}
                                     onClick={() => handleSelectSlot(slot)}
                                     className={`group relative w-full text-left p-3.5 rounded-lg border transition-all flex flex-col justify-between h-full cursor-pointer hover:shadow-2xs ${isSelected
-                                        ? "border-indigo-600 bg-indigo-50/20 ring-1 ring-indigo-500"
-                                        : "border-slate-200 bg-white hover:border-slate-350"
+                                      ? "border-indigo-600 bg-indigo-50/20 ring-1 ring-indigo-500"
+                                      : "border-slate-200 bg-white hover:border-slate-350"
                                       }`}
                                   >
                                     <div className="space-y-3.5 w-full">
@@ -4039,10 +4042,10 @@ ${followUpStr}
                                     <div className="mt-3.5 pt-2 border-t border-slate-100/80 w-full flex flex-col gap-2">
                                       <div className="flex justify-between items-center">
                                         <span className={`text-[9px] font-bold uppercase tracking-wider font-mono ${slot.overallRating === "Perfect"
-                                            ? "text-emerald-600"
-                                            : slot.overallRating === "Good"
-                                              ? "text-blue-600"
-                                              : "text-amber-600"
+                                          ? "text-emerald-600"
+                                          : slot.overallRating === "Good"
+                                            ? "text-blue-600"
+                                            : "text-amber-600"
                                           }`}>
                                           {slot.overallRatingLabel} Match
                                         </span>
@@ -4112,8 +4115,8 @@ ${followUpStr}
                                   </div>
                                 </div>
                                 <span className={`px-2 py-0.5 text-[8px] font-extrabold font-mono rounded-full ${auraStatus === "completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
-                                    auraStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
-                                      "bg-slate-50 text-slate-500 border border-slate-100"
+                                  auraStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
+                                    "bg-slate-50 text-slate-500 border border-slate-100"
                                   }`}>
                                   {auraStatus.toUpperCase()}
                                 </span>
@@ -4187,8 +4190,8 @@ ${followUpStr}
                                   </div>
                                 </div>
                                 <span className={`px-2 py-0.5 text-[8px] font-extrabold font-mono rounded-full ${chronosStatus === "completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
-                                    chronosStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
-                                      "bg-slate-50 text-slate-500 border border-slate-100"
+                                  chronosStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
+                                    "bg-slate-50 text-slate-500 border border-slate-100"
                                   }`}>
                                   {chronosStatus.toUpperCase()}
                                 </span>
@@ -4257,8 +4260,8 @@ ${followUpStr}
                                   </div>
                                 </div>
                                 <span className={`px-2 py-0.5 text-[8px] font-extrabold font-mono rounded-full ${scribeStatus === "completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
-                                    scribeStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
-                                      "bg-slate-50 text-slate-500 border border-slate-100"
+                                  scribeStatus === "running" ? "bg-indigo-50 text-indigo-700 border border-indigo-100 animate-pulse" :
+                                    "bg-slate-50 text-slate-500 border border-slate-100"
                                   }`}>
                                   {scribeStatus.toUpperCase()}
                                 </span>
@@ -4278,8 +4281,8 @@ ${followUpStr}
                                       type="button"
                                       onClick={() => setScribeTone("professional")}
                                       className={`text-[10px] font-bold py-1.5 px-1 rounded-lg transition-all cursor-pointer text-center ${scribeTone === "professional"
-                                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                                         }`}
                                     >
                                       Professional
@@ -4288,8 +4291,8 @@ ${followUpStr}
                                       type="button"
                                       onClick={() => setScribeTone("casual")}
                                       className={`text-[10px] font-bold py-1.5 px-1 rounded-lg transition-all cursor-pointer text-center ${scribeTone === "casual"
-                                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                                         }`}
                                     >
                                       Casual
@@ -4298,8 +4301,8 @@ ${followUpStr}
                                       type="button"
                                       onClick={() => setScribeTone("technical")}
                                       className={`text-[10px] font-bold py-1.5 px-1 rounded-lg transition-all cursor-pointer text-center ${scribeTone === "technical"
-                                          ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
-                                          : "text-slate-600 hover:text-slate-900 border border-transparent"
+                                        ? "bg-white text-indigo-700 shadow-xs border border-slate-200/50"
+                                        : "text-slate-600 hover:text-slate-900 border border-transparent"
                                         }`}
                                     >
                                       Technical
@@ -4733,8 +4736,8 @@ ${followUpStr}
                                     key={index}
                                     onClick={() => toggleActionItem(index)}
                                     className={`w-full text-left flex items-start gap-3 p-2.5 rounded-lg border transition-all cursor-pointer ${item.completed
-                                        ? "bg-emerald-50/20 border-emerald-100 opacity-60 line-through text-slate-500"
-                                        : "bg-white border-slate-150 hover:border-indigo-200 hover:bg-indigo-50/5"
+                                      ? "bg-emerald-50/20 border-emerald-100 opacity-60 line-through text-slate-500"
+                                      : "bg-white border-slate-150 hover:border-indigo-200 hover:bg-indigo-50/5"
                                       }`}
                                   >
                                     <div className="mt-0.5 shrink-0">
@@ -4828,17 +4831,17 @@ ${followUpStr}
                                   key={index}
                                   onClick={() => setSelectedSlotIndex(index)}
                                   className={`p-4 rounded-lg border transition-all cursor-pointer ${isSelected
-                                      ? "bg-indigo-50/30 border-indigo-500 ring-1 ring-indigo-500"
-                                      : "bg-white border-slate-200 hover:border-slate-350"
+                                    ? "bg-indigo-50/30 border-indigo-500 ring-1 ring-indigo-500"
+                                    : "bg-white border-slate-200 hover:border-slate-350"
                                     }`}
                                 >
                                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
                                     <div className="flex items-center gap-2">
                                       <div className={`text-[9px] px-2 py-0.5 rounded font-bold font-mono ${index === 0
-                                          ? "bg-emerald-100 text-emerald-800"
-                                          : index === 1
-                                            ? "bg-blue-100 text-blue-800"
-                                            : "bg-amber-100 text-amber-800"
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : index === 1
+                                          ? "bg-blue-100 text-blue-800"
+                                          : "bg-amber-100 text-amber-800"
                                         }`}>
                                         OPTION #{index + 1} ({slot.score} PTS)
                                       </div>
@@ -4848,12 +4851,12 @@ ${followUpStr}
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider font-mono ${slot.overallRating === "Perfect"
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                                          : slot.overallRating === "Good"
-                                            ? "bg-blue-50 text-blue-700 border-blue-100"
-                                            : slot.overallRating === "Challenging"
-                                              ? "bg-amber-50 text-amber-700 border-amber-100"
-                                              : "bg-red-50 text-red-700 border-red-100"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                        : slot.overallRating === "Good"
+                                          ? "bg-blue-50 text-blue-700 border-blue-100"
+                                          : slot.overallRating === "Challenging"
+                                            ? "bg-amber-50 text-amber-700 border-amber-100"
+                                            : "bg-red-50 text-red-700 border-red-100"
                                         }`}>
                                         {slot.overallRatingLabel}
                                       </span>
@@ -4881,10 +4884,10 @@ ${followUpStr}
                                               <div className="flex items-center gap-1.5">
                                                 <span className="font-mono text-slate-800 font-bold">{at.localTimeStr.split(" - ")[1]}</span>
                                                 <span className={`w-2 h-2 rounded-full ${at.status === "core"
-                                                    ? "bg-emerald-500"
-                                                    : (at.status === "shoulder" || at.status === "off")
-                                                      ? "bg-amber-500"
-                                                      : "bg-red-500"
+                                                  ? "bg-emerald-500"
+                                                  : (at.status === "shoulder" || at.status === "off")
+                                                    ? "bg-amber-500"
+                                                    : "bg-red-500"
                                                   }`} title={at.statusLabel}></span>
                                               </div>
                                             </div>
@@ -4903,10 +4906,10 @@ ${followUpStr}
                                             <div className="flex-1 flex gap-0.5 bg-slate-100 rounded-sm p-0.5">
                                               {/* Represent timeline blocks: morning, work, evening, sleep */}
                                               <div className={`h-2 flex-1 rounded-xs ${at.status === "core"
-                                                  ? "bg-emerald-500"
-                                                  : (at.status === "shoulder" || at.status === "off")
-                                                    ? "bg-amber-500"
-                                                    : "bg-red-500"
+                                                ? "bg-emerald-500"
+                                                : (at.status === "shoulder" || at.status === "off")
+                                                  ? "bg-amber-500"
+                                                  : "bg-red-500"
                                                 }`}></div>
                                             </div>
                                             <span className="text-[9px] font-mono text-slate-400 w-14 text-right">
@@ -5213,8 +5216,8 @@ ${followUpStr}
                                     <span
                                       key={i}
                                       className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 font-semibold transition-all ${isErr
-                                          ? "bg-rose-100 text-rose-900 border border-rose-300 ring-1 ring-rose-300/40"
-                                          : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                        ? "bg-rose-100 text-rose-900 border border-rose-300 ring-1 ring-rose-300/40"
+                                        : "bg-indigo-50 text-indigo-700 border border-indigo-100"
                                         }`}
                                       title={isErr ? singleVal.message : undefined}
                                     >
@@ -5489,8 +5492,8 @@ ${followUpStr}
                                   <span>SMTP Live Pipeline</span>
                                 </span>
                                 <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wide ${smtpStatus === "sending" ? "bg-amber-500/15 text-amber-400" :
-                                    smtpStatus === "error" ? "bg-rose-500/20 text-rose-400 font-extrabold border border-rose-500/30" :
-                                      "bg-emerald-500/15 text-emerald-400"
+                                  smtpStatus === "error" ? "bg-rose-500/20 text-rose-400 font-extrabold border border-rose-500/30" :
+                                    "bg-emerald-500/15 text-emerald-400"
                                   }`}>
                                   {smtpStatus === "sending" ? "TRANSMITTING..." :
                                     smtpStatus === "error" ? "TRANSMISSION FAILED" :
@@ -5604,8 +5607,8 @@ ${followUpStr}
                                           key={t.id}
                                           onClick={() => setActiveThreadId(t.id)}
                                           className={`p-3 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${isActive
-                                              ? "bg-white border-indigo-500 shadow-xs ring-1 ring-indigo-50"
-                                              : "bg-white/60 border-slate-200 hover:border-slate-300"
+                                            ? "bg-white border-indigo-500 shadow-xs ring-1 ring-indigo-50"
+                                            : "bg-white/60 border-slate-200 hover:border-slate-300"
                                             }`}
                                         >
                                           <div className="min-w-0 flex-1">
@@ -6288,8 +6291,8 @@ ${followUpStr}
                       setSetupError(null);
                     }}
                     className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "login"
-                        ? "bg-white text-indigo-700 shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
+                      ? "bg-white text-indigo-700 shadow-2xs"
+                      : "text-slate-500 hover:text-slate-800"
                       }`}
                   >
                     Sign In
@@ -6301,8 +6304,8 @@ ${followUpStr}
                       setSetupError(null);
                     }}
                     className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "register"
-                        ? "bg-white text-indigo-700 shadow-2xs"
-                        : "text-slate-500 hover:text-slate-800"
+                      ? "bg-white text-indigo-700 shadow-2xs"
+                      : "text-slate-500 hover:text-slate-800"
                       }`}
                   >
                     Register Account
