@@ -567,14 +567,32 @@ export default function App() {
       } catch (e) { }
     }
     const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-    return saved === "unassigned";
+    return !saved || saved === "unassigned";
   });
 
-  // Treat user as authenticated if they have a standard profile OR an active Google session
-  const isAuthenticated = (!isGuestMode && !!currentUserEmail && currentUserEmail !== "unassigned") || !!driveUser || !!driveAccessToken;
+  // Helper to extract a valid email string from local storage
+  const validStoredIdentity = (() => {
+    if (typeof localStorage === "undefined") return null;
+    const id = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
+    return id && id !== "unassigned" ? id : null;
+  })();
 
-  // Resolve the active email for the UI, falling back to Google Drive user email
-  const currentUser = isAuthenticated ? (currentUserEmail !== "unassigned" ? currentUserEmail : driveUser?.email || "user") : null;
+  // Treat user as authenticated if any valid non-unassigned email exists
+  const isAuthenticated =
+    Boolean(auth.currentUser?.email) ||
+    Boolean(driveUser?.email) ||
+    (Boolean(currentUserEmail) && currentUserEmail !== "unassigned") ||
+    Boolean(validStoredIdentity);
+
+  // Resolve active email cleanly across all fallbacks
+  const currentUser = isAuthenticated
+    ? (auth.currentUser?.email || driveUser?.email || (currentUserEmail !== "unassigned" ? currentUserEmail : null) || validStoredIdentity || "user")
+    : null;
+
+  // Resolve the active email for the UI cleanly across all storage fallbacks
+  const currentUser = isAuthenticated
+    ? (auth.currentUser?.email || driveUser?.email || (currentUserEmail !== "unassigned" ? currentUserEmail : null) || (typeof localStorage !== "undefined" ? localStorage.getItem("cadence_active_identity") : null) || "user")
+    : null;
 
   // Restore Session on Mount from app_session_user
   useEffect(() => {
