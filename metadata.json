@@ -1,0 +1,8 @@
+{
+  "name": "Cadence Desk",
+  "description": "Cadence Desk is an autonomous multi-agent workspace that transforms raw meeting transcripts into actionable task breakdowns, multi-region timezone schedules, and validated executive follow-up emails all in seconds.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
