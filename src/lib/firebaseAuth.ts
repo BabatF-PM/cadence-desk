@@ -11,6 +11,12 @@ provider.addScope("https://www.googleapis.com/auth/gmail.send");
 provider.addScope("https://www.googleapis.com/auth/userinfo.email");
 provider.addScope("https://www.googleapis.com/auth/calendar.readonly");
 
+// Force Google OAuth to show the consent screen and grant the new gmail.send scope
+provider.setCustomParameters({
+  prompt: 'consent',
+  access_type: 'offline'
+});
+
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
