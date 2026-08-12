@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // CORS setup
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -18,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-            return res.status(500).json({ error: 'GEMINI_API_KEY environment variable is missing in Vercel settings.' });
+            return res.status(500).json({ error: 'GEMINI_API_KEY environment variable is missing.' });
         }
 
         const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
@@ -28,12 +27,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'Transcript is required.' });
         }
 
-        // Dynamic import to prevent Vercel module load failures
         const { GoogleGenAI } = await import('@google/genai');
         const ai = new GoogleGenAI({ apiKey });
 
+        // Use gemini-2.5-flash for the new SDK
         const response = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-2.5-flash',
             contents: `You are an AI meeting assistant. Distill the following transcript for "${meetingTitle || 'Meeting'}":\n\n${transcript}`
         });
 
