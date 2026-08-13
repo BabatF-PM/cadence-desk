@@ -558,6 +558,15 @@ export default function App() {
     return "";
   });
 
+  // Cleanly check for valid active identity from local storage (filtering out "unassigned")
+  const getValidStoredIdentity = (): string | null => {
+    if (typeof localStorage === "undefined") return null;
+    const id = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
+    return id && id !== "unassigned" ? id : null;
+  };
+
+  const storedEmail = getValidStoredIdentity();
+
   const [isGuestMode, setIsGuestMode] = useState<boolean>(() => {
     const savedSession = localStorage.getItem("app_session_user");
     if (savedSession) {
@@ -566,23 +575,20 @@ export default function App() {
         if (parsed?.email) return false;
       } catch (e) { }
     }
-    const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-    return !saved || saved === "unassigned";
+    return !storedEmail;
   });
 
-  // Helper to extract a valid email string from local storage
-  const validStoredIdentity = (() => {
-    if (typeof localStorage === "undefined") return null;
-    const id = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-    return id && id !== "unassigned" ? id : null;
-  })();
-
-  // Treat user as authenticated if any valid non-unassigned email exists
+  // Treat user as authenticated IF AND ONLY IF a non-unassigned email address is found
   const isAuthenticated =
     Boolean(auth.currentUser?.email) ||
     Boolean(driveUser?.email) ||
     (Boolean(currentUserEmail) && currentUserEmail !== "unassigned") ||
-    Boolean(validStoredIdentity);
+    Boolean(storedEmail);
+
+  // Resolve the active user email cleanly across all fallbacks
+  const currentUser = isAuthenticated
+    ? (auth.currentUser?.email || driveUser?.email || (currentUserEmail !== "unassigned" ? currentUserEmail : null) || storedEmail || "user")
+    : null;
 
   // Resolve active email cleanly across all fallbacks
   const currentUser = isAuthenticated
