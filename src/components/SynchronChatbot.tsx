@@ -213,8 +213,8 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
 
                   <div
                     className={`max-w-[88%] p-3.5 rounded-2xl text-xs leading-relaxed ${msg.sender === "user"
-                        ? "bg-indigo-600 text-white rounded-br-none shadow-sm"
-                        : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-none shadow-xs"
+                      ? "bg-indigo-600 text-white rounded-br-none shadow-sm"
+                      : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-none shadow-xs"
                       }`}
                   >
                     {msg.sender === "user" ? (
@@ -245,21 +245,20 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Suggestion Chips */}
-            {messages.length <= 2 && (
-              <div className="px-3 py-2 bg-slate-100/80 border-t border-slate-200/60 flex flex-wrap gap-1.5">
-                {dynamicSuggestions.map((q, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSend(q)}
-                    disabled={isLoading}
-                    className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200/70 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-50"
-                  >
-                    💡 {q}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Quick Contextual Suggestion Chips - Always Visible */}
+            <div className="px-3 py-2 bg-slate-100/80 border-t border-slate-200/60 flex flex-wrap gap-1.5">
+              {dynamicSuggestions.map((q, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleSend(q)}
+                  disabled={isLoading}
+                  className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200/70 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  💡 {q}
+                </button>
+              ))}
+            </div>
 
             {/* Footer Input Form */}
             <div className="p-3 bg-white border-t border-slate-200">
