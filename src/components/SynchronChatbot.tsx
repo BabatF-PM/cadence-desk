@@ -72,15 +72,18 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       suggestions.push("What are the key decisions in the loaded transcript?");
     }
 
-    // Default platform & architecture fallbacks to fill out chips
-    if (suggestions.length < 4) {
-      suggestions.push("Where is my data stored?");
-    }
-    if (suggestions.length < 4) {
-      suggestions.push("How long does the agent pipeline take?");
-    }
-    if (suggestions.length < 4) {
-      suggestions.push("Difference between Reset Workspace & Log Out");
+    // Guaranteed fallbacks to always ensure exactly 4 suggestion chips
+    const fallbacks = [
+      "Where is my data stored?",
+      "How long does the agent pipeline take?",
+      "Difference between Reset Workspace & Log Out",
+      "Explain the 4-stage agent pipeline"
+    ];
+
+    for (const f of fallbacks) {
+      if (suggestions.length < 4 && !suggestions.includes(f)) {
+        suggestions.push(f);
+      }
     }
 
     return suggestions.slice(0, 4);
@@ -246,7 +249,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
             </div>
 
             {/* Quick Contextual Suggestion Chips - Always Visible */}
-            <div className="px-3 py-2 bg-slate-100/80 border-t border-slate-200/60 flex flex-wrap gap-1.5">
+            <div className="shrink-0 px-3 py-2 bg-slate-100/90 border-t border-slate-200/80 flex flex-wrap gap-1.5 z-10">
               {dynamicSuggestions.map((q, idx) => (
                 <button
                   key={idx}
