@@ -228,33 +228,18 @@ ${JSON.stringify(meetingContext.proposedSlots || [], null, 2)}
 
   const FULL_SYSTEM_INSTRUCTION = `${MASTER_SYSTEM_PROMPT}\n${dynamicContextBlock}`;
 
-  // First attempt server-side proxy
+  // Direct Gemini SDK execution if API key is present
   try {
-    const res = await fetch('/api/assistant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: userQuestion, meetingContext })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.answer) {
-        return data.answer;
-      }
-    }
-  } catch (err) {
-    console.warn("Server API assistant proxy unavailable, trying client-side fallback:", err);
-  }
-
-  // Client-side fallback via @google/genai if API key is in environment
-  try {
-    const apiKey = typeof process !== "undefined" && process.env
-      ? (process.env.REACT_APP_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '')
-      : '';
+    const apiKey =
+      (typeof process !== "undefined" && process.env?.REACT_APP_GEMINI_API_KEY) ||
+      (typeof process !== "undefined" && process.env?.GEMINI_API_KEY) ||
+      (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+      '';
 
     if (apiKey) {
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: userQuestion }] }],
         config: {
           systemInstruction: FULL_SYSTEM_INSTRUCTION,
@@ -268,9 +253,9 @@ ${JSON.stringify(meetingContext.proposedSlots || [], null, 2)}
       }
     }
   } catch (error) {
-    console.error("Gemini Assistant Client Error, using offline grounded rule engine:", error);
+    console.warn("Gemini Client Error, using offline grounded rule engine:", error);
   }
 
-  // Guaranteed fallback to grounded knowledge base
+  // Guaranteed zero-latency grounded fallback knowledge base
   return getLocalGroundedResponse(userQuestion, meetingContext);
 }
