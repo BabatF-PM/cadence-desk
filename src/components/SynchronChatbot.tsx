@@ -38,7 +38,8 @@ How can I help you today?`,
   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 };
 
-const QUESTION_POOL = [
+// Full library of dynamic follow-up suggestions
+const ALL_SUGGESTIONS = [
   "Where is my data stored?",
   "Explain the 4-stage agent pipeline",
   "Difference between Reset Workspace & Log Out",
@@ -46,7 +47,9 @@ const QUESTION_POOL = [
   "How long does the agent pipeline take?",
   "What security guarantees does zero-cloud storage offer?",
   "How do I export action items to Outlook or Slack?",
-  "Explain the consensus scoring algorithm"
+  "Explain the consensus scoring algorithm",
+  "Can guest users run the agent pipeline?",
+  "Who do I contact for support or inquiries?"
 ];
 
 export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext }) => {
@@ -56,13 +59,13 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Dynamic Suggestion Chips - Filters out queries the user has already sent
-  const dynamicSuggestions = useMemo<string[]>(() => {
-    const userAskedQueries = messages
+  // Dynamic Suggestion Chips: Always guarantees at least 3-4 suggestions are returned and visible
+  const activeSuggestions = useMemo<string[]>(() => {
+    const userQueries = messages
       .filter((m) => m.sender === "user")
       .map((m) => m.text.trim().toLowerCase());
 
-    const suggestions: string[] = [];
+    const result: string[] = [];
 
     const hasTasks = Boolean(meetingContext?.extractedTasks && meetingContext.extractedTasks.length > 0);
     const hasAttendees = Boolean(meetingContext?.attendees && meetingContext.attendees.length > 0);
@@ -70,30 +73,36 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
     const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
 
     if (hasTasks) {
-      suggestions.push("Who has the highest-priority action items?");
-      suggestions.push("Summarize all extracted tasks and deadlines");
+      result.push("Who has the highest-priority action items?");
+      result.push("Summarize all extracted tasks and deadlines");
     }
 
     if (hasAttendees || hasSlots) {
-      suggestions.push("Which timezone slot has the best alignment score?");
-      suggestions.push("List all attendees and their locations");
+      result.push("Which timezone slot has the best alignment score?");
+      result.push("List all attendees and their locations");
     }
 
     if (hasTranscript && !hasTasks) {
-      suggestions.push("What are the key decisions in the loaded transcript?");
+      result.push("What are the key decisions in the loaded transcript?");
     }
 
-    for (const q of QUESTION_POOL) {
-      if (suggestions.length < 4 && !suggestions.includes(q) && !userAskedQueries.includes(q.toLowerCase())) {
-        suggestions.push(q);
+    // Add unasked questions from the master pool
+    for (const q of ALL_SUGGESTIONS) {
+      if (result.length < 4 && !result.includes(q) && !userQueries.includes(q.toLowerCase())) {
+        result.push(q);
       }
     }
 
-    if (suggestions.length === 0) {
-      return QUESTION_POOL.slice(0, 4);
+    // If all suggestions have been asked, cycle through the master list so buttons NEVER disappear
+    if (result.length < 3) {
+      for (const q of ALL_SUGGESTIONS) {
+        if (result.length < 4 && !result.includes(q)) {
+          result.push(q);
+        }
+      }
     }
 
-    return suggestions.slice(0, 4);
+    return result.slice(0, 4);
   }, [meetingContext, messages]);
 
   const scrollToBottom = () => {
@@ -135,7 +144,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         sender: "assistant",
-        text: "⚠️ I encountered an error retrieving the grounded answer.",
+        text: "⚠️ I encountered an error retrieving the grounded answer. All active session data lives strictly in client-side RAM.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages((prev: ChatMessage[]) => [...prev, errorMsg]);
@@ -156,7 +165,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
   };
 
   return (
-    <div id="synchron-chatbot-root" className="fixed bottom-4 right-4 z-40">
+    <div id="synchron-chatbot-root" className="fixed bottom-4 right-4 z-50">
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -164,9 +173,9 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="mb-4 w-[380px] sm:w-[430px] h-[560px] max-h-[82vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden font-sans text-slate-800"
+            className="mb-4 w-[380px] sm:w-[430px] h-[580px] max-h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden font-sans text-slate-800"
           >
-            {/* 1. TOP HEADER */}
+            {/* Header */}
             <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white p-4 flex items-center justify-between border-b border-indigo-700/50 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300">
@@ -203,7 +212,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
               </div>
             </div>
 
-            {/* 2. MIDDLE SCROLLABLE CONVERSATION BODY */}
+            {/* Conversation Messages Scrollable Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50 min-h-0">
               {messages.map((msg: ChatMessage) => (
                 <div
@@ -222,7 +231,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
                   </div>
 
                   <div
-                    className={`max-w-[88%] p-3.5 rounded-2xl text-xs leading-relaxed ${msg.sender === "user"
+                    className={`max-w-[90%] p-3.5 rounded-2xl text-xs leading-relaxed ${msg.sender === "user"
                       ? "bg-indigo-600 text-white rounded-br-none shadow-sm"
                       : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-none shadow-xs"
                       }`}
@@ -255,25 +264,32 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
               <div ref={messagesEndRef} />
             </div>
 
-            {/* 3. PINNED BOTTOM FOOTER (SUGGESTIONS + INPUT) */}
-            <div className="shrink-0 bg-white border-t border-slate-200">
-              {/* Dynamic Suggestion Chips pinned directly above text box */}
-              <div className="p-2.5 bg-slate-50 border-b border-slate-200/80 flex flex-wrap gap-1.5 max-h-[92px] overflow-y-auto">
-                {dynamicSuggestions.map((q: string, idx: number) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleSend(q)}
-                    disabled={isLoading}
-                    className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 active:scale-95 border border-indigo-200 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-                  >
-                    <span>💡</span>
-                    <span>{q}</span>
-                  </button>
-                ))}
+            {/* Permanent Fixed Footer: Suggestions Tray + Input Form */}
+            <div className="shrink-0 bg-white border-t border-slate-200 z-10">
+              {/* Dynamic Suggestions Row */}
+              <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200/80">
+                <div className="flex items-center justify-between mb-1.5 px-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Suggested Questions
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-[96px] overflow-y-auto">
+                  {activeSuggestions.map((q: string, idx: number) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSend(q)}
+                      disabled={isLoading}
+                      className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 active:scale-95 border border-indigo-200 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                    >
+                      <span className="text-xs">💡</span>
+                      <span>{q}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Text Input Row */}
+              {/* Form Input Row */}
               <div className="p-3">
                 <form
                   onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
@@ -310,7 +326,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
         )}
       </AnimatePresence>
 
-      {/* FLOATING ACTION BUTTON */}
+      {/* Floating Action Button */}
       {!isOpen && (
         <motion.button
           onClick={() => setIsOpen(true)}
