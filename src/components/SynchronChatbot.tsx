@@ -1,15 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Bot,
   X,
   Send,
   Sparkles,
   Loader2,
-  MessageSquare,
   ShieldCheck,
-  HelpCircle,
-  Trash2,
-  ChevronDown
+  Trash2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
@@ -42,14 +39,14 @@ How can I help you today?`,
 };
 
 export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_WELCOME]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [input, setInput] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Dynamic Contextual Suggestion Chips based on live React RAM meeting context
-  const dynamicSuggestions = useMemo(() => {
+  const dynamicSuggestions = useMemo<string[]>(() => {
     const suggestions: string[] = [];
 
     const hasTasks = Boolean(meetingContext?.extractedTasks && meetingContext.extractedTasks.length > 0);
@@ -57,7 +54,6 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
     const hasSlots = Boolean(meetingContext?.proposedSlots && meetingContext.proposedSlots.length > 0);
     const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
 
-    // If an active session is loaded in RAM, prioritize deep-dive questions
     if (hasTasks) {
       suggestions.push("Who has the highest-priority action items?");
       suggestions.push("Summarize all extracted tasks and deadlines");
@@ -72,7 +68,6 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       suggestions.push("What are the key decisions in the loaded transcript?");
     }
 
-    // Guaranteed fallbacks to always ensure exactly 4 suggestion chips
     const fallbacks = [
       "Where is my data stored?",
       "How long does the agent pipeline take?",
@@ -110,7 +105,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    setMessages((prev: ChatMessage[]) => [...prev, userMsg]);
     if (!textToSend) setInput("");
     setIsLoading(true);
 
@@ -122,7 +117,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
         text: responseText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages((prev: ChatMessage[]) => [...prev, assistantMsg]);
     } catch (err) {
       console.error("Chatbot response error:", err);
       const errorMsg: ChatMessage = {
@@ -131,7 +126,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
         text: "⚠️ I encountered an error retrieving the grounded answer. Cadence Desk strictly uses local browser memory and transient AI processing.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
-      setMessages(prev => [...prev, errorMsg]);
+      setMessages((prev: ChatMessage[]) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
     }
@@ -160,7 +155,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
             className="mb-4 w-[380px] sm:w-[420px] h-[540px] max-h-[80vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden font-sans text-slate-800"
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white p-4 flex items-center justify-between border-b border-indigo-700/50">
+            <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white p-4 flex items-center justify-between border-b border-indigo-700/50 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300">
                   <Bot className="w-5 h-5 text-indigo-200" />
@@ -182,14 +177,14 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
                 <button
                   onClick={clearChat}
                   title="Clear Chat"
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
                   title="Close Assistant"
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -197,8 +192,8 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
             </div>
 
             {/* Chat Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
-              {messages.map((msg) => (
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50 min-h-0">
+              {messages.map((msg: ChatMessage) => (
                 <div
                   key={msg.id}
                   className={`flex flex-col ${msg.sender === "user" ? "items-end" : "items-start"}`}
@@ -248,51 +243,55 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Contextual Suggestion Chips - Always Visible */}
-            <div className="shrink-0 px-3 py-2 bg-slate-100/90 border-t border-slate-200/80 flex flex-wrap gap-1.5 z-10">
-              {dynamicSuggestions.map((q, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => handleSend(q)}
-                  disabled={isLoading}
-                  className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200/70 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  💡 {q}
-                </button>
-              ))}
-            </div>
+            {/* Bottom Section: Fixed Visible Suggestion Chips + Input Form */}
+            <div className="shrink-0 bg-white border-t border-slate-200">
+              {/* Quick Contextual Suggestion Chips */}
+              <div className="p-2.5 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-1.5 max-h-[85px] overflow-y-auto">
+                {dynamicSuggestions.map((q: string, idx: number) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleSend(q)}
+                    disabled={isLoading}
+                    className="text-[10px] text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                  >
+                    <span>💡</span>
+                    <span>{q}</span>
+                  </button>
+                ))}
+              </div>
 
-            {/* Footer Input Form */}
-            <div className="p-3 bg-white border-t border-slate-200">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSend();
-                }}
-                className="flex items-center gap-2"
-              >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask about architecture, privacy, or issues..."
-                  disabled={isLoading}
-                  className="flex-1 text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition placeholder:text-slate-400"
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isLoading}
-                  className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 disabled:opacity-40 disabled:hover:bg-indigo-600 transition shadow-xs flex items-center justify-center cursor-pointer"
+              {/* Form Input */}
+              <div className="p-3">
+                <form
+                  onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
+                    e.preventDefault();
+                    handleSend();
+                  }}
+                  className="flex items-center gap-2"
                 >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-              <div className="mt-1.5 text-center">
-                <span className="text-[10px] text-slate-400 font-mono">
-                  Enterprise AI Cadence Desk • Grounded Navigator v1.0
-                </span>
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Ask about architecture, privacy, or issues..."
+                    disabled={isLoading}
+                    className="flex-1 text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition placeholder:text-slate-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!input.trim() || isLoading}
+                    className="p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 active:scale-95 disabled:opacity-40 disabled:hover:bg-indigo-600 transition shadow-xs flex items-center justify-center cursor-pointer"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+                <div className="mt-1.5 text-center">
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Enterprise AI Cadence Desk • Grounded Navigator v1.0
+                  </span>
+                </div>
               </div>
             </div>
           </motion.div>
