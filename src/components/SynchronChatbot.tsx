@@ -45,7 +45,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Dynamic Contextual Suggestion Chips - Rotates fresh questions on every interaction
+  // Dynamic Contextual Suggestion Chips - Always persistent and rotates on interaction
   const dynamicSuggestions = useMemo<string[]>(() => {
     const askedLower = messages.map((m) => m.text.trim().toLowerCase());
     const suggestions: string[] = [];
@@ -55,7 +55,6 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
     const hasSlots = Boolean(meetingContext?.proposedSlots && meetingContext.proposedSlots.length > 0);
     const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
 
-    // Context-dependent dynamic queries
     if (hasTasks) {
       suggestions.push("Who has the highest-priority action items?");
       suggestions.push("Summarize all extracted tasks and deadlines");
@@ -70,7 +69,6 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       suggestions.push("What are the key decisions in the loaded transcript?");
     }
 
-    // Question pool to continuously replace asked questions with new ones
     const questionPool = [
       "Where is my data stored?",
       "Explain the 4-stage agent pipeline",
@@ -88,7 +86,6 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       }
     }
 
-    // Fallback if all pool questions have been asked
     if (suggestions.length === 0) {
       return questionPool.slice(0, 4);
     }
@@ -255,17 +252,17 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Bottom Section: Fixed Visible Suggestion Chips + Input Form */}
+            {/* Bottom Fixed Area: Suggestions + Input Form */}
             <div className="shrink-0 bg-white border-t border-slate-200">
-              {/* Quick Contextual Suggestion Chips */}
-              <div className="p-2.5 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-1.5 max-h-[85px] overflow-y-auto">
+              {/* Quick Contextual Suggestion Chips - Pinned directly above input */}
+              <div className="p-2.5 bg-slate-50 border-b border-slate-200/80 flex flex-wrap gap-1.5 max-h-[88px] overflow-y-auto">
                 {dynamicSuggestions.map((q: string, idx: number) => (
                   <button
                     key={idx}
                     type="button"
                     onClick={() => handleSend(q)}
                     disabled={isLoading}
-                    className="text-[10px] text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                    className="text-[10px] text-indigo-700 bg-white hover:bg-indigo-50 active:scale-95 border border-indigo-200/80 px-2 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
                   >
                     <span>💡</span>
                     <span>{q}</span>
