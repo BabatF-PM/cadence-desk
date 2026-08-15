@@ -45,8 +45,9 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Dynamic Contextual Suggestion Chips based on live React RAM meeting context
+  // Dynamic Contextual Suggestion Chips - Rotates fresh questions on every interaction
   const dynamicSuggestions = useMemo<string[]>(() => {
+    const askedLower = messages.map((m) => m.text.trim().toLowerCase());
     const suggestions: string[] = [];
 
     const hasTasks = Boolean(meetingContext?.extractedTasks && meetingContext.extractedTasks.length > 0);
@@ -54,6 +55,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
     const hasSlots = Boolean(meetingContext?.proposedSlots && meetingContext.proposedSlots.length > 0);
     const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
 
+    // Context-dependent dynamic queries
     if (hasTasks) {
       suggestions.push("Who has the highest-priority action items?");
       suggestions.push("Summarize all extracted tasks and deadlines");
@@ -68,21 +70,31 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
       suggestions.push("What are the key decisions in the loaded transcript?");
     }
 
-    const fallbacks = [
+    // Question pool to continuously replace asked questions with new ones
+    const questionPool = [
       "Where is my data stored?",
-      "How long does the agent pipeline take?",
+      "Explain the 4-stage agent pipeline",
       "Difference between Reset Workspace & Log Out",
-      "Explain the 4-stage agent pipeline"
+      "How were Issue #18 and #27 resolved?",
+      "How long does the agent pipeline take?",
+      "What security guarantees does zero-cloud storage offer?",
+      "How do I export action items to Outlook or Slack?",
+      "Explain the consensus scoring algorithm"
     ];
 
-    for (const f of fallbacks) {
-      if (suggestions.length < 4 && !suggestions.includes(f)) {
-        suggestions.push(f);
+    for (const q of questionPool) {
+      if (suggestions.length < 4 && !suggestions.includes(q) && !askedLower.includes(q.toLowerCase())) {
+        suggestions.push(q);
       }
     }
 
+    // Fallback if all pool questions have been asked
+    if (suggestions.length === 0) {
+      return questionPool.slice(0, 4);
+    }
+
     return suggestions.slice(0, 4);
-  }, [meetingContext]);
+  }, [meetingContext, messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
