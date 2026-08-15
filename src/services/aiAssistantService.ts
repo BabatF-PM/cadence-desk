@@ -42,15 +42,17 @@ You are Cadence Navigator, the grounded AI assistant for Cadence Desk. You provi
 ================================================================================
 2. THE 4-STAGE MULTI-AGENT PIPELINE
 ================================================================================
-- Stage 1: Agent Aura (Task Extractor) - Ingests raw meeting transcripts and distills them into structured action items, assignees, deadlines, and priority levels.
-- Stage 2: Agent Chronos (Timezone Optimizer) - Standardizes attendee timezones to UTC and evaluates slot overlaps using an algorithmic scoring system:
+- Total Processing Duration: End-to-end execution typically takes 5 to 10 seconds total.
+- Stage 1: Agent Aura (Task Extractor) (~2–3 seconds) - Ingests raw meeting transcripts and distills them into structured action items, assignees, deadlines, and priority levels.
+- Stage 2: Agent Chronos (Timezone Optimizer) (~1 second) - Standardizes attendee timezones to UTC and evaluates slot overlaps using an algorithmic scoring system:
   * Gold: +10 points
   * Silver: +5 points
   * Sleeping: -15 points
   * Conflict: -100 points
   Pauses execution at the Decision Desk for PM confirmation.
-- Stage 3: Agent Scribe (Comms Specialist) - Drafts executive recap emails combining tasks and schedules while enforcing a body cap under 1,600 characters for mailto: link compatibility.
-- Stage 4: Outbox Transport Gateway - Dispatches outbound recaps via Google OAuth or Universal SMTP (Office365, Yahoo, custom) under a strict 2,000-character total payload limit.
+-- Stage 3: Agent Scribe (Comms Specialist) (~2–3 seconds) - Drafts executive recap emails combining tasks and schedules while enforcing a body cap under 1,600 characters for mailto: link compatibility.
+- Stage 4: Outbox Transport Gateway (Instant / < 1 second) - Dispatches outbound recaps via Google OAuth or Universal SMTP (Office365, Yahoo, custom) under a strict 2,000-character total payload limit.
+
 
 ================================================================================
 3. WORKSPACE LIFECYCLE & SECURITY CONTROLS
@@ -245,8 +247,8 @@ ${JSON.stringify(meetingContext.proposedSlots || [], null, 2)}
 
   // Client-side fallback via @google/genai if API key is in environment
   try {
-    const apiKey = typeof process !== "undefined" && process.env 
-      ? (process.env.REACT_APP_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '') 
+    const apiKey = typeof process !== "undefined" && process.env
+      ? (process.env.REACT_APP_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '')
       : '';
 
     if (apiKey) {

@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
-import { 
-  Bot, 
-  X, 
-  Send, 
-  Sparkles, 
-  Loader2, 
-  MessageSquare, 
-  ShieldCheck, 
-  HelpCircle, 
+import {
+  Bot,
+  X,
+  Send,
+  Sparkles,
+  Loader2,
+  MessageSquare,
+  ShieldCheck,
+  HelpCircle,
   Trash2,
   ChevronDown
 } from "lucide-react";
@@ -41,19 +41,50 @@ How can I help you today?`,
   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 };
 
-const SUGGESTED_QUESTIONS = [
-  "Where is my data stored?",
-  "Explain the 4-stage agent pipeline",
-  "Difference between Reset Workspace & Log Out",
-  "How were Issue #18 and #27 resolved?"
-];
-
 export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_WELCOME]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Dynamic Contextual Suggestion Chips based on live React RAM meeting context
+  const dynamicSuggestions = useMemo(() => {
+    const suggestions: string[] = [];
+
+    const hasTasks = Boolean(meetingContext?.extractedTasks && meetingContext.extractedTasks.length > 0);
+    const hasAttendees = Boolean(meetingContext?.attendees && meetingContext.attendees.length > 0);
+    const hasSlots = Boolean(meetingContext?.proposedSlots && meetingContext.proposedSlots.length > 0);
+    const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
+
+    // If an active session is loaded in RAM, prioritize deep-dive questions
+    if (hasTasks) {
+      suggestions.push("Who has the highest-priority action items?");
+      suggestions.push("Summarize all extracted tasks and deadlines");
+    }
+
+    if (hasAttendees || hasSlots) {
+      suggestions.push("Which timezone slot has the best alignment score?");
+      suggestions.push("List all attendees and their locations");
+    }
+
+    if (hasTranscript && !hasTasks) {
+      suggestions.push("What are the key decisions in the loaded transcript?");
+    }
+
+    // Default platform & architecture fallbacks to fill out chips
+    if (suggestions.length < 4) {
+      suggestions.push("Where is my data stored?");
+    }
+    if (suggestions.length < 4) {
+      suggestions.push("How long does the agent pipeline take?");
+    }
+    if (suggestions.length < 4) {
+      suggestions.push("Difference between Reset Workspace & Log Out");
+    }
+
+    return suggestions.slice(0, 4);
+  }, [meetingContext]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -181,11 +212,10 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
                   </div>
 
                   <div
-                    className={`max-w-[88%] p-3.5 rounded-2xl text-xs leading-relaxed ${
-                      msg.sender === "user"
+                    className={`max-w-[88%] p-3.5 rounded-2xl text-xs leading-relaxed ${msg.sender === "user"
                         ? "bg-indigo-600 text-white rounded-br-none shadow-sm"
                         : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-none shadow-xs"
-                    }`}
+                      }`}
                   >
                     {msg.sender === "user" ? (
                       <p className="whitespace-pre-wrap">{msg.text}</p>
@@ -218,7 +248,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
             {/* Quick Suggestion Chips */}
             {messages.length <= 2 && (
               <div className="px-3 py-2 bg-slate-100/80 border-t border-slate-200/60 flex flex-wrap gap-1.5">
-                {SUGGESTED_QUESTIONS.map((q, idx) => (
+                {dynamicSuggestions.map((q, idx) => (
                   <button
                     key={idx}
                     onClick={() => handleSend(q)}
