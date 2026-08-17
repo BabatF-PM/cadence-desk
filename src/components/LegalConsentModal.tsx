@@ -32,6 +32,7 @@ export const LegalConsentModal: React.FC<LegalConsentModalProps> = ({
     if (typeof localStorage !== "undefined") {
       localStorage.setItem("cadence_legal_consent_audit", JSON.stringify(auditRecord));
       localStorage.setItem("cadence_legal_accepted", "true");
+      localStorage.setItem("m_synchron_legal_accepted", "true");
     }
 
     onConsentGiven();

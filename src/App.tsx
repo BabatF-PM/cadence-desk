@@ -243,6 +243,23 @@ export default function App() {
     }
     return false;
   });
+ const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => {
+    const savedSession = localStorage.getItem("app_session_user");
+    if (savedSession) {
+      try {
+        const parsed = JSON.parse(savedSession);
+        if (parsed?.email) return parsed.email;
+      } catch (e) { }
+    }
+    const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
+    if (saved && saved !== "unassigned") return saved;
+    return "";
+  });
+
+  const [driveUser, setDriveUser] = useState<any>(null);
+  const [authModalMode, setAuthModalMode] = useState<"login" | "register" | "edit">("login");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const [recipients, setRecipients] = useState<string[]>([]);
   const [newRecipientInput, setNewRecipientInput] = useState("");
@@ -272,6 +289,28 @@ export default function App() {
       : (attendees && attendees.length > 0 ? attendees.map((a) => a.email).filter(Boolean) : []);
     return validateRecipientsList(listToValidate);
   }, [recipients, attendees]);
+
+  // --- Clean User Email Resolver ---
+  const activeUserEmail = useMemo(() => {
+    if (currentUserEmail && currentUserEmail !== "unassigned" && currentUserEmail !== "your-email@domain.com") return currentUserEmail;
+    if (typeof driveUser !== "undefined" && driveUser?.email) return driveUser.email;
+    if (typeof (window as any).auth !== "undefined" && (window as any).auth?.currentUser?.email) {
+      return (window as any).auth.currentUser.email;
+    }
+    if (typeof smtpConfig !== "undefined" && smtpConfig?.senderEmail) {
+      return smtpConfig.senderEmail;
+    }
+
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
+      if (saved && saved !== "unassigned" && saved !== "your-email@domain.com") return saved;
+    }
+    return "";
+  }, [currentUserEmail, driveUser, smtpConfig]);
+
+  const isUserLoggedIn = Boolean(activeUserEmail && activeUserEmail !== "guest@local");
+  const isAuthenticated = isUserLoggedIn;
+  const currentUser = activeUserEmail || "guest@local";
 
   // Auto-claim default/placeholder threads for the active user
   useEffect(() => {
@@ -310,7 +349,6 @@ export default function App() {
   const [driveSearchQuery, setDriveSearchQuery] = useState("");
   const [driveError, setDriveError] = useState<string | null>(null);
   const [driveAccessToken, setDriveAccessToken] = useState<string | null>(null);
-  const [driveUser, setDriveUser] = useState<any>(null);
   const [isDriveParsing, setIsDriveParsing] = useState(false);
 
   const isGoogleConnected = !!(driveAccessToken || driveUser);
@@ -318,14 +356,20 @@ export default function App() {
   const isEmailConnected = isGoogleConnected || isSmtpConnected;
 
   // --- Legal & Privacy Consent State ---
-  const [isLegalAccepted, setIsLegalAccepted] = useState<boolean>(() => {
-    if (typeof localStorage !== "undefined") {
-      const accepted = localStorage.getItem("cadence_legal_accepted") || localStorage.getItem("m_synchron_legal_accepted");
-      return accepted === "true";
-    }
-    return false;
-  });
+  const readLegalConsent = () => {
+    if (typeof localStorage === "undefined") return false;
+    const accepted = localStorage.getItem("cadence_legal_accepted") || localStorage.getItem("m_synchron_legal_accepted");
+    return accepted === "true";
+  };
+
+  const [isLegalAccepted, setIsLegalAccepted] = useState<boolean>(readLegalConsent);
   const [activeLegalModal, setActiveLegalModal] = useState<"privacy" | "terms" | null>(null);
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("cadence_legal_accepted", String(isLegalAccepted));
+    localStorage.setItem("m_synchron_legal_accepted", String(isLegalAccepted));
+  }, [isLegalAccepted]);
 
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
   const [logoutCount, setLogoutCount] = useState(0);
@@ -559,22 +603,6 @@ export default function App() {
     return {};
   });
 
-  const [authModalMode, setAuthModalMode] = useState<"login" | "register" | "edit">("login");
-  const [setupPassword, setSetupPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-
-  const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => {
-    const savedSession = localStorage.getItem("app_session_user");
-    if (savedSession) {
-      try {
-        const parsed = JSON.parse(savedSession);
-        if (parsed?.email) return parsed.email;
-      } catch (e) { }
-    }
-    const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-    if (saved && saved !== "unassigned") return saved;
-    return "";
-  });
 
   const [isGuestMode, setIsGuestMode] = useState<boolean>(() => {
     const savedSession = localStorage.getItem("app_session_user");
@@ -588,25 +616,7 @@ export default function App() {
     return !saved || saved === "unassigned";
   });
 
-  // --- Clean User Email Resolver ---
-  const activeUserEmail = useMemo(() => {
-    if (currentUserEmail && currentUserEmail !== "unassigned") return currentUserEmail;
-    if (typeof driveUser !== "undefined" && driveUser?.email) return driveUser.email;
-    if (typeof auth !== "undefined" && auth?.currentUser?.email) return auth.currentUser.email;
-
-    if (typeof localStorage !== "undefined") {
-      const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-      if (saved && saved !== "unassigned") return saved;
-    }
-
-    return null;
-  }, [currentUserEmail, driveUser]);
-
-  const isUserLoggedIn = Boolean(activeUserEmail);
-  const isAuthenticated = isUserLoggedIn;
-  const currentUser = activeUserEmail;
-
-  // Restore Session on Mount from app_session_user
+   // Restore Session on Mount from app_session_user
   useEffect(() => {
     const savedSession = localStorage.getItem("app_session_user");
     if (savedSession) {
@@ -1085,10 +1095,26 @@ export default function App() {
 
   const [saveTargetThreadId, setSaveTargetThreadId] = useState("");
   const [newThreadTitle, setNewThreadTitle] = useState("");
+  const [recapThreadMode, setRecapThreadMode] = useState<"new" | "existing" | null>(null);
+  const [recapThreadSelectId, setRecapThreadSelectId] = useState("");
+  const [recapNewThreadTitle, setRecapNewThreadTitle] = useState("");
   const [threadSubTab, setThreadSubTab] = useState<"timeline" | "tasks">("timeline");
   const [expandedEntryIds, setExpandedEntryIds] = useState<Record<string, boolean>>({});
   const [createThreadNameInput, setCreateThreadNameInput] = useState("");
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+
+  const ownedThreads = useMemo(() => {
+    if (!currentUserEmail) return [];
+    return threads.filter(t => t.ownerEmail === currentUserEmail);
+  }, [threads, currentUserEmail]);
+
+  useEffect(() => {
+    if (!recapData) return;
+    const defaultTitle = (meetingTitle || recapData.suggestedTitle || "Recurring Sync").trim();
+    if (!recapNewThreadTitle) {
+      setRecapNewThreadTitle(defaultTitle);
+    }
+  }, [meetingTitle, recapData, recapNewThreadTitle]);
 
   // Persist threads to localStorage
   useEffect(() => {
@@ -1752,7 +1778,48 @@ export default function App() {
     });
   };
 
-  // Handle saving current recap to a selected or new thread
+  const buildCurrentRecapEntry = (): MeetingEntry | null => {
+    if (!recapData) return null;
+
+    return {
+      id: "entry-" + Date.now(),
+      dateStr: referenceDate,
+      meetingTitle: meetingTitle.trim() || recapData.suggestedTitle || "Untitled Sync",
+      recapTitle: recapData.suggestedTitle,
+      summary: recapData.summary,
+      keyTopics: recapData.keyTopics,
+      actionItems: recapData.actionItems.map(item => ({ ...item })),
+      suggestedAgenda: recapData.suggestedAgenda,
+      selectedSlot: selectedSlot ? {
+        dateStr: selectedSlot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+        timeStr: selectedSlot.utcDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) + " UTC"
+      } : null
+    };
+  };
+
+  const saveCurrentRecapToThread = (threadId: string) => {
+    if (!recapData || !threadId) return;
+
+    const entry = buildCurrentRecapEntry();
+    if (!entry) return;
+
+    setThreads(prev => prev.map(t => {
+      if (t.id !== threadId) return t;
+      return {
+        ...t,
+        entries: [entry, ...t.entries]
+      };
+    }));
+
+    setActiveThreadId(threadId);
+    setSaveTargetThreadId("");
+    setRecapThreadMode(null);
+    setRecapThreadSelectId("");
+    setRecapNewThreadTitle("");
+    setSaveSuccessMessage(`Successfully saved this recap as a new iteration in the thread.`);
+    setTimeout(() => setSaveSuccessMessage(null), 4000);
+  };
+
   const handleSaveToThread = () => {
     if (!recapData) return;
 
@@ -1784,39 +1851,58 @@ export default function App() {
       return;
     }
 
-    // 2. Find the thread and add the new entry
     const threadIndex = updatedThreads.findIndex(t => t.id === targetThreadId);
     if (threadIndex === -1) return;
 
-    const newEntry: MeetingEntry = {
-      id: "entry-" + Date.now(),
-      dateStr: referenceDate,
-      meetingTitle: meetingTitle.trim() || recapData.suggestedTitle,
-      recapTitle: recapData.suggestedTitle,
-      summary: recapData.summary,
-      keyTopics: recapData.keyTopics,
-      actionItems: recapData.actionItems.map(item => ({ ...item })),
-      suggestedAgenda: recapData.suggestedAgenda,
-      selectedSlot: selectedSlot ? {
-        dateStr: selectedSlot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
-        timeStr: selectedSlot.utcDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) + " UTC"
-      } : null
-    };
+    const newEntry = buildCurrentRecapEntry();
+    if (!newEntry) return;
 
     updatedThreads[threadIndex] = {
       ...updatedThreads[threadIndex],
-      entries: [newEntry, ...updatedThreads[threadIndex].entries] // Add to start of list
+      entries: [newEntry, ...updatedThreads[threadIndex].entries]
     };
 
     setThreads(updatedThreads);
     setActiveThreadId(targetThreadId);
     setSaveTargetThreadId("");
-
-    // Clear save success message after 4 seconds
     setSaveSuccessMessage(`Successfully saved to "${updatedThreads[threadIndex].title}"!`);
     setTimeout(() => {
       setSaveSuccessMessage(null);
     }, 4000);
+  };
+
+  const handleSaveRecapToNewThread = () => {
+    if (!recapData) return;
+    const trimmedTitle = recapNewThreadTitle.trim();
+    if (!trimmedTitle) {
+      alert("Please name the new recurring thread before saving.");
+      return;
+    }
+
+    const newThread: MeetingThread = {
+      id: "thread-" + Date.now(),
+      title: trimmedTitle,
+      createdAt: new Date().toISOString().split("T")[0],
+      entries: [],
+      ownerEmail: currentUserEmail,
+      allowedEmails: []
+    };
+
+    const entry = buildCurrentRecapEntry();
+    if (!entry) return;
+
+    const nextThreads = [...threads, { ...newThread, entries: [entry, ...newThread.entries] }];
+    setThreads(nextThreads);
+    setActiveThreadId(newThread.id);
+    setRecapThreadMode(null);
+    setRecapNewThreadTitle("");
+    setSaveSuccessMessage(`Saved to new recurring thread "${newThread.title}".`);
+    setTimeout(() => setSaveSuccessMessage(null), 4000);
+  };
+
+  const handleSaveRecapToExistingThread = () => {
+    if (!recapData || !recapThreadSelectId) return;
+    saveCurrentRecapToThread(recapThreadSelectId);
   };
 
   // Toggle checklist inside active thread's entries
@@ -2937,9 +3023,7 @@ ${followUpStr}
   };
 
   return (
-    <div className="relative min-h-screen bg-[#F8FAFC]">
-      {/* Workspace Content (Blurred and Non-Interactive until Legal Consent is Accepted) */}
-      <div className={`min-h-screen bg-[#F8FAFC] text-slate-900 font-sans antialiased selection:bg-indigo-100 selection:text-indigo-900 transition-all ${!isLegalAccepted ? "blur-sm pointer-events-none select-none overflow-hidden h-screen" : ""}`}>
+    <div className={`relative min-h-screen bg-[#F8FAFC] text-slate-900 font-sans antialiased selection:bg-indigo-100 selection:text-indigo-900 transition-all ${!isLegalAccepted ? "overflow-hidden h-screen" : ""}`}>
         {/* Upper Navigation Header */}
         <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-40 flex items-center justify-between px-6 shrink-0">
           <div className="flex items-center gap-3">
@@ -3165,7 +3249,7 @@ ${followUpStr}
                         placeholder="e.g. Liam Foster"
                         value={newAttendeeName}
                         onChange={(e) => setNewAttendeeName(e.target.value)}
-                        className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-hidden focus:border-indigo-500"
+                        className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-none focus:border-indigo-500"
                       />
                     </div>
                     <div>
@@ -3175,7 +3259,7 @@ ${followUpStr}
                         placeholder="liam@company.com"
                         value={newAttendeeEmail}
                         onChange={(e) => setNewAttendeeEmail(e.target.value)}
-                        className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-hidden focus:border-indigo-500"
+                        className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-none focus:border-indigo-500"
                       />
                     </div>
                   </div>
@@ -3184,7 +3268,7 @@ ${followUpStr}
                     <select
                       value={newAttendeeTimezone}
                       onChange={(e) => setNewAttendeeTimezone(e.target.value)}
-                      className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-hidden"
+                      className="w-full text-[11px] mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded focus:outline-none"
                     >
                       {PRESET_TIMEZONES.map((tz) => (
                         <option key={tz.value} value={tz.value}>
@@ -3276,7 +3360,7 @@ ${followUpStr}
                     placeholder="e.g. Sprint Review Sync"
                     value={meetingTitle}
                     onChange={(e) => setMeetingTitle(e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded focus:outline-hidden focus:border-indigo-500"
+                    className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded focus:outline-none focus:border-indigo-500"
                   />
                 </div>
 
@@ -3462,7 +3546,7 @@ ${followUpStr}
                     value={transcript}
                     onChange={(e) => setTranscript(e.target.value)}
                     rows={8}
-                    className="w-full text-xs p-3 bg-white border border-slate-200 rounded focus:outline-hidden focus:border-indigo-500 font-mono resize-y"
+                    className="w-full text-xs p-3 bg-white border border-slate-200 rounded focus:outline-none focus:border-indigo-500 font-mono resize-y"
                   />
                 </div>
 
@@ -3525,7 +3609,7 @@ ${followUpStr}
                       <select
                         value={duration}
                         onChange={(e) => setDuration(Number(e.target.value))}
-                        className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded focus:outline-hidden"
+                        className="w-full text-xs px-2 py-1 bg-white border border-slate-200 rounded focus:outline-none"
                       >
                         <option value={15}>15 Minutes</option>
                         <option value={30}>30 Minutes</option>
@@ -3546,7 +3630,7 @@ ${followUpStr}
                         type="date"
                         value={referenceDate}
                         onChange={(e) => setReferenceDate(e.target.value)}
-                        className="w-full text-xs px-2 py-0.5 bg-white border border-slate-200 rounded focus:outline-hidden"
+                        className="w-full text-xs px-2 py-0.5 bg-white border border-slate-200 rounded focus:outline-none"
                       />
                     </div>
                   </div>
@@ -4162,7 +4246,7 @@ ${followUpStr}
                                   <select
                                     value={auraTone}
                                     onChange={(e) => setAuraTone(e.target.value as any)}
-                                    className="w-full text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden text-slate-700 font-semibold mt-0.5"
+                                    className="w-full text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none text-slate-700 font-semibold mt-0.5"
                                   >
                                     <option value="standard">Standard Distillation</option>
                                     <option value="detailed">In-depth Exhaustive Summary</option>
@@ -4237,7 +4321,7 @@ ${followUpStr}
                                   <select
                                     value={chronosConstraint}
                                     onChange={(e) => setChronosConstraint(e.target.value as any)}
-                                    className="w-full text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden text-slate-700 font-semibold mt-0.5"
+                                    className="w-full text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none text-slate-700 font-semibold mt-0.5"
                                   >
                                     <option value="core_only">Strict 9AM - 5PM Core Only</option>
                                     <option value="core_shoulder">Standard 8AM - 6PM Core/Shoulder</option>
@@ -4536,2123 +4620,2097 @@ ${followUpStr}
                       </motion.div>
                     )}
 
-                    {/* TAB 5: RECURRING MEETING THREADS */}
-                    {activeTab === "threads" && (
-                      !isUserLoggedIn ? (
-                        <div className="text-center py-16 bg-slate-50 border border-slate-200 rounded-xl p-8 max-w-md mx-auto space-y-4 my-8">
-                          <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mx-auto text-indigo-600">
-                            <Lock className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <h3 className="text-base font-bold text-slate-800">Recurring Threads Hub Locked</h3>
-                            <p className="text-xs text-slate-500 mt-1">
-                              A Primary Account is required to create, view, and organize recurring meeting threads and history.
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => setIsSetupModalOpen(true)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
-                          >
-                            Sign In to Access Recurring Threads
-                          </button>
-                        </div>
-                      ) : (
-                                /* Recurring Threads Hub Content */
-                              )
-                    )}
-                    Save this session summary into a chronological recurring workspace
-                  </p>
-                </div>
-                            </div>
-
-          {saveSuccessMessage && (
-            <div className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5 animate-pulse">
-              {saveSuccessMessage}
-            </div>
-          )}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 pt-0.5">
-        <select
-          value={saveTargetThreadId}
-          onChange={(e) => setSaveTargetThreadId(e.target.value)}
-          className="text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-hidden text-slate-700 font-medium grow max-w-[200px]"
-        >
-          <option value="">-- Select Recurring Thread --</option>
-          <option value="new">+ Create New Thread...</option>
-          {visibleThreads.map((t) => (
-            <option key={t.id} value={t.id}>{t.title} ({t.entries.length} saves)</option>
-          ))}
-        </select>
-
-        {saveTargetThreadId === "new" && (
-          <input
-            type="text"
-            placeholder="E.g., Weekly Marketing Align..."
-            value={newThreadTitle}
-            onChange={(e) => setNewThreadTitle(e.target.value)}
-            className="text-xs px-2.5 py-1.5 bg-white border border-indigo-200 rounded-lg focus:outline-hidden text-slate-700 font-semibold w-full sm:w-auto grow"
-          />
-        )}
-
-        <button
-          onClick={handleSaveToThread}
-          disabled={!saveTargetThreadId || (saveTargetThreadId === "new" && !newThreadTitle.trim())}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold px-3.5 py-1.5 rounded-lg text-[10px] transition-colors cursor-pointer flex items-center gap-1 shrink-0 uppercase tracking-wider ml-auto"
-        >
-          <FolderSync className="w-3.5 h-3.5" />
-          Save Recap to Thread
-        </button>
-      </div>
-    </div>
-  ) : (
-    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl mb-5 flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-slate-700">🔒 Recurring Thread Hub</span>
-        <span className="text-xs text-slate-500">(Primary Account Required)</span>
-      </div>
-      <button
-        onClick={() => setIsSetupModalOpen(true)}
-        className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-indigo-700 transition cursor-pointer"
-      >
-        Sign In to Save History
-      </button>
-    </div>
-  )
-                    )
-}
-
-{/* TAB 1: RECAP & TASKS */ }
-{
-  activeTab === "recap" && (
-    (!hasProcessed || !recapData) ? (
-      <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
-        <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
-        <h4 className="text-sm font-bold text-slate-800">No Intelligence Extracted Yet</h4>
-        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-          Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
-        </p>
-      </div>
-    ) : (
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-4"
-      >
-
-        {/* Header title */}
-        <div className="border-b border-slate-100 pb-3">
-          <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest font-mono">Suggested Email Subject Line</span>
-          <h3 className="text-sm font-bold text-slate-800 mt-0.5">
-            {meetingTitle || recapData.suggestedTitle}
-          </h3>
-        </div>
-
-        {/* Executive Summary Card - Serif Typography */}
-        <div className="bg-slate-50/50 rounded-lg p-4 border border-slate-100 font-serif text-slate-700 leading-relaxed text-xs">
-          <h4 className="text-[10px] font-sans font-bold text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-            <Sparkles className="w-3 h-3 text-indigo-500" />
-            Executive Summary
-          </h4>
-          <p className="font-serif">
-            {recapData.summary}
-          </p>
-        </div>
-
-        {/* Key Topics Grid */}
-        <div>
-          <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
-            Key Topics Discussed
-          </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {recapData.keyTopics.map((topic, i) => (
-              <div key={i} className="flex items-start gap-2 p-2 bg-slate-50/50 border border-slate-100 rounded">
-                <span className="text-xs text-indigo-500 font-mono font-bold">•</span>
-                <span className="text-xs text-slate-700 font-medium">{topic}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Action Items Interactive Checklist */}
-        <div>
-          {isExportDropdownOpen && (
-            <div className="fixed inset-0 z-40" onClick={() => setIsExportDropdownOpen(false)} />
-          )}
-          <div className="flex items-center justify-between mb-2.5 relative">
-            <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              Action Items Checklist
-            </h4>
-
-            {/* Export Dropdown Anchor */}
-            <div className="relative z-50">
-              <button
-                id="export-tasks-btn"
-                onClick={() => setIsExportDropdownOpen(!isExportDropdownOpen)}
-                className="text-[10px] bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 text-indigo-700 font-bold px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <FileCheck className="w-3.5 h-3.5 text-indigo-600" />
-                Multi-Platform Export
-                <ChevronDown className={`w-3 h-3 transition-transform ${isExportDropdownOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              <AnimatePresence>
-                {isExportDropdownOpen && (
+              {/* TAB 1: RECAP & TASKS */}
+              {activeTab === "recap" && (
+                !hasProcessed || !recapData ? (
+                  <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
+                    <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
+                    <h4 className="text-sm font-bold text-slate-800">No Intelligence Extracted Yet</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                      Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
+                    </p>
+                  </div>
+                ) : (
                   <motion.div
-                    initial={{ opacity: 0, y: 5, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 5, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-50 p-1.5 space-y-0.5"
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-4"
                   >
-                    <div className="text-[9px] uppercase font-mono tracking-widest text-slate-400 font-bold px-2 py-1">
-                      Export Formats
+                    {/* Header title */}
+                    <div className="border-b border-slate-100 pb-3">
+                      <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest font-mono">Suggested Email Subject Line</span>
+                      <h3 className="text-sm font-bold text-slate-800 mt-0.5">
+                        {meetingTitle || recapData.suggestedTitle}
+                      </h3>
                     </div>
-                    <button
-                      id="export-jira-btn"
-                      onClick={() => {
-                        handleExportJira();
-                        setIsExportDropdownOpen(false);
-                      }}
-                      className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                        Jira / Confluence Markup
-                      </span>
-                      {copiedFormat === "jira" ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-slate-400 shrink-0" />
-                      )}
-                    </button>
 
-                    <button
-                      id="export-markdown-btn"
-                      onClick={() => {
-                        handleExportMarkdown();
-                        setIsExportDropdownOpen(false);
-                      }}
-                      className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
-                        Markdown Checkboxes
-                      </span>
-                      {copiedFormat === "markdown" ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-slate-400 shrink-0" />
-                      )}
-                    </button>
-
-                    <button
-                      id="export-csv-btn"
-                      onClick={() => {
-                        handleExportCSV();
-                        setIsExportDropdownOpen(false);
-                      }}
-                      className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        Asana / Trello (CSV)
-                      </span>
-                      {copiedFormat === "csv" ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <Download className="w-3 h-3 text-slate-400 shrink-0" />
-                      )}
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
-          {recapData.actionItems.length === 0 ? (
-            <p className="text-xs text-slate-500 italic p-3 bg-slate-50 rounded-lg text-center">
-              No clear action items extracted from discussion.
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              {recapData.actionItems.map((item, index) => (
-                <button
-                  key={index}
-                  onClick={() => toggleActionItem(index)}
-                  className={`w-full text-left flex items-start gap-3 p-2.5 rounded-lg border transition-all cursor-pointer ${item.completed
-                    ? "bg-emerald-50/20 border-emerald-100 opacity-60 line-through text-slate-500"
-                    : "bg-white border-slate-150 hover:border-indigo-200 hover:bg-indigo-50/5"
-                    }`}
-                >
-                  <div className="mt-0.5 shrink-0">
-                    {item.completed ? (
-                      <div className="bg-emerald-500 text-white p-0.5 rounded">
-                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-indigo-700">Thread Management</span>
+                        <span className="text-[9px] text-slate-500 font-medium">{recapData.actionItems.length} action items ready</span>
                       </div>
-                    ) : (
-                      <div className="w-3.5 h-3.5 border border-slate-300 rounded bg-white hover:border-indigo-500 transition-colors" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold leading-normal text-slate-800">{item.task}</div>
-                    {item.nextSteps && (
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="mt-1.5 text-[10px] text-slate-600 bg-slate-50/80 border border-slate-150/40 rounded-md p-1.5 font-sans leading-relaxed"
-                      >
-                        <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-600 tracking-wider mr-1">Next Steps:</span>
-                        {item.nextSteps}
-                      </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[9px] font-mono">
-                      <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded font-bold">
-                        Owner: {item.assignee}
-                      </span>
-                      {item.deadline && item.deadline !== "Not specified" && (
-                        <span className="bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded font-bold">
-                          Due: {item.deadline}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* Suggested Agenda Card */}
-        <div className="border-t border-slate-100 pt-3">
-          <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
-            Suggested Agenda for Follow-up Sync
-          </h4>
-          <ol className="space-y-1">
-            {recapData.suggestedAgenda.map((agenda, i) => (
-              <li key={i} className="flex items-center gap-2 text-xs text-slate-600">
-                <span className="font-mono text-indigo-600 font-bold bg-indigo-50/60 w-4.5 h-4.5 rounded flex items-center justify-center text-[9px] shrink-0">
-                  {i + 1}
-                </span>
-                <span>{agenda}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </motion.div>
-    )
-  )
-}
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecapThreadMode("new");
+                            setRecapThreadSelectId("");
+                            setRecapNewThreadTitle((meetingTitle || recapData.suggestedTitle || "Recurring Sync").trim());
+                          }}
+                          className="flex-1 min-w-[220px] bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[11px] px-3 py-2 rounded-lg transition-all cursor-pointer shadow-xs"
+                        >
+                          Save to New Recurring Thread
+                        </button>
 
-{/* TAB 2: TIMEZONE OVERLAP PLANNER */ }
-{
-  activeTab === "overlap" && (
-    (!proposedSlots || proposedSlots.length === 0) ? (
-      <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
-        <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
-        <h4 className="text-sm font-bold text-slate-800">No Timezone Overlap Calculated Yet</h4>
-        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-          Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
-        </p>
-      </div>
-    ) : (
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-4"
-      >
-        <div className="border-b border-slate-100 pb-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-            <Globe className="w-3.5 h-3.5 text-indigo-600" />
-            Timezone Overlap Solver
-          </h3>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            The scheduler calculated the best 3 slots next week where attendees are awake and free (9:00 AM - 5:00 PM local).
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          {proposedSlots.map((slot, index) => {
-            const isSelected = selectedSlotIndex === index;
-            return (
-              <div
-                key={index}
-                onClick={() => setSelectedSlotIndex(index)}
-                className={`p-4 rounded-lg border transition-all cursor-pointer ${isSelected
-                  ? "bg-indigo-50/30 border-indigo-500 ring-1 ring-indigo-500"
-                  : "bg-white border-slate-200 hover:border-slate-350"
-                  }`}
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
-                  <div className="flex items-center gap-2">
-                    <div className={`text-[9px] px-2 py-0.5 rounded font-bold font-mono ${index === 0
-                      ? "bg-emerald-100 text-emerald-800"
-                      : index === 1
-                        ? "bg-blue-100 text-blue-800"
-                        : "bg-amber-100 text-amber-800"
-                      }`}>
-                      OPTION #{index + 1} ({slot.score} PTS)
-                    </div>
-                    <div className="text-xs font-bold text-slate-800">
-                      {slot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider font-mono ${slot.overallRating === "Perfect"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                      : slot.overallRating === "Good"
-                        ? "bg-blue-50 text-blue-700 border-blue-100"
-                        : slot.overallRating === "Challenging"
-                          ? "bg-amber-50 text-amber-700 border-amber-100"
-                          : "bg-red-50 text-red-700 border-red-100"
-                      }`}>
-                      {slot.overallRatingLabel}
-                    </span>
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300"
-                      }`}>
-                      {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Local Time Breakdown and Visual Timeline */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50/50 p-3 rounded border border-slate-100">
-                  {/* List with detail */}
-                  <div className="space-y-1.5">
-                    <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Local Attendee Times</div>
-                    <div className="space-y-1">
-                      {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => {
-                        const effectiveRoster = (slot.attendees && slot.attendees.length > 1) ? slot.attendees : (attendees.length > 1 ? attendees : globalExtractedAttendeesRef.current);
-                        const hostTz = effectiveRoster.find(x => x.isHost)?.timezone;
-                        return (
-                          <div key={at.attendeeId} className="flex justify-between items-center text-xs">
-                            <span className="text-slate-600 font-medium">
-                              {at.name} {at.timezone === hostTz && <span className="text-[9px] text-slate-400 font-normal">(Host)</span>}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-slate-800 font-bold">{at.localTimeStr.split(" - ")[1]}</span>
-                              <span className={`w-2 h-2 rounded-full ${at.status === "core"
-                                ? "bg-emerald-500"
-                                : (at.status === "shoulder" || at.status === "off")
-                                  ? "bg-amber-500"
-                                  : "bg-red-500"
-                                }`} title={at.statusLabel}></span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Visual 24h Grid Representation */}
-                  <div className="flex flex-col justify-center">
-                    <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1.5">Time overlap map</div>
-                    <div className="space-y-1">
-                      {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => (
-                        <div key={at.attendeeId} className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-slate-500 w-16 truncate text-left">{at.name}</span>
-                          <div className="flex-1 flex gap-0.5 bg-slate-100 rounded-sm p-0.5">
-                            {/* Represent timeline blocks: morning, work, evening, sleep */}
-                            <div className={`h-2 flex-1 rounded-xs ${at.status === "core"
-                              ? "bg-emerald-500"
-                              : (at.status === "shoulder" || at.status === "off")
-                                ? "bg-amber-500"
-                                : "bg-red-500"
-                              }`}></div>
-                          </div>
-                          <span className="text-[9px] font-mono text-slate-400 w-14 text-right">
-                            {at.localHour}:00 {at.localHour >= 12 ? "PM" : "AM"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex justify-between text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-2 border-t border-slate-100 pt-1">
-                      <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Core</span>
-                      <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Shoulder</span>
-                      <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-500"></span> Sleep</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Trigger Button: Generate Email Draft with Selected Slot */}
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectSlot(slot);
-                    }}
-                    disabled={isAgentAutopilotRunning || scribeStatus === "running"}
-                    className={`w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium px-4 py-2 rounded-lg text-xs transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5 ${isSelected ? "opacity-100" : "opacity-90 group-hover:opacity-100"
-                      }`}
-                  >
-                    <span>✉️ Generate Email Draft with Selected Slot</span>
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </motion.div>
-    )
-  )
-}
-
-{/* TAB 3: CALENDAR INVITES (.ICS) */ }
-{
-  activeTab === "calendar" && (
-    (!proposedSlots || proposedSlots.length === 0) ? (
-      <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
-        <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
-        <h4 className="text-sm font-bold text-slate-800">No Calendar Invites Generated Yet</h4>
-        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-          Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
-        </p>
-      </div>
-    ) : (
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-4"
-      >
-        <div className="border-b border-slate-100 pb-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-            <CalendarCheck className="w-3.5 h-3.5 text-indigo-600" />
-            Download .ics Calendar Invites
-          </h3>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            Click download to instantly generate standard `.ics` files. Drag them into Google Calendar, Outlook, or Apple Calendar easily!
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {proposedSlots.map((slot, index) => {
-            const dateStr = slot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-            const timeStr = slot.utcDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-
-            return (
-              <div
-                key={index}
-                className="bg-white border border-slate-200 rounded-lg p-3.5 shadow-sm hover:border-slate-350 transition-all flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Option #{index + 1}</span>
-                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded ${slot.overallRating === "Perfect" ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"
-                      }`}>
-                      {slot.overallRating}
-                    </span>
-                  </div>
-                  <div className="text-xs font-bold text-slate-800">{dateStr}</div>
-                  <div className="text-[11px] text-indigo-600 font-mono font-bold mt-1">{timeStr} UTC</div>
-                  <div className="text-[10px] text-slate-400 mt-2 border-t border-slate-100 pt-2 space-y-1">
-                    <div className="font-bold text-slate-500 uppercase tracking-tight text-[8px]">Attendee Times:</div>
-                    {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => (
-                      <div key={at.attendeeId} className="flex justify-between">
-                        <span className="truncate max-w-[75px] font-medium text-slate-600">{at.name}</span>
-                        <span className="font-mono text-slate-700 font-bold">{at.localTimeStr.split(" - ")[1]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleDownloadIcs(slot, `meeting-follow-up-option-${index + 1}.ics`)}
-                  className="w-full text-center mt-3.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold py-1.5 rounded flex items-center justify-center gap-1 transition-colors border border-indigo-100 cursor-pointer"
-                >
-                  <Download className="w-3 h-3" />
-                  Download .ics File
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </motion.div>
-    )
-  )
-}
-
-{/* TAB 4: EMAIL RECAP EMAIL DRAFT */ }
-{
-  activeTab === "email" && (
-    (!hasProcessed || !recapData || !editedEmail) ? (
-      <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
-        <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
-        <h4 className="text-sm font-bold text-slate-800">No Email Draft Generated Yet</h4>
-        <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-          Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
-        </p>
-      </div>
-    ) : (
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-4"
-      >
-        {/* Control bar */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div>
-            <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-              <Mail className="w-3.5 h-3.5 text-indigo-600" />
-              Email Recap Draft
-            </h3>
-          </div>
-
-          <div className="flex items-center bg-slate-100 rounded p-0.5 border border-slate-200">
-            <button
-              onClick={() => setEmailMode("preview")}
-              className={`px-3.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded transition-all cursor-pointer flex items-center gap-1 ${emailMode === "preview" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
-                }`}
-            >
-              <span>👁️ Preview</span>
-            </button>
-            <button
-              onClick={() => setEmailMode("edit")}
-              className={`px-3.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded transition-all cursor-pointer flex items-center gap-1 ${emailMode === "edit" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
-                }`}
-            >
-              <span>✏️ Edit Draft</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Email Connection Required Alert Banner */}
-        {gmailConnectionWarning && (
-          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-[11px] text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs text-left animate-fade-in">
-            <div className="flex items-start gap-2.5 flex-1">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <span className="font-extrabold text-amber-950 block">No Outbox Connected</span>
-                <span className="text-amber-850 leading-normal block">{gmailConnectionWarning}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto">
-              <button
-                type="button"
-                onClick={handleCopyPlainText}
-                className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 justify-center flex-1 sm:flex-initial"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copy Draft Content</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const card = document.getElementById("email-account-connect-card") || document.getElementById("google-account-connect-card");
-                  if (card) {
-                    card.scrollIntoView({ behavior: "smooth", block: "center" });
-                    card.classList.add("ring-2", "ring-indigo-500");
-                    setTimeout(() => {
-                      card.classList.remove("ring-2", "ring-indigo-500");
-                    }, 2500);
-                  }
-                }}
-                className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1 justify-center flex-1 sm:flex-initial"
-              >
-                <span>Connect Account</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Server Connection Error Alert Banner with Fallback Copy Button */}
-        {serverConnectionError && (
-          <div className="bg-rose-50 border border-rose-300 rounded-xl p-3.5 text-[11px] text-rose-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs text-left animate-fade-in">
-            <div className="flex items-start gap-2.5 flex-1">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <span className="font-extrabold text-rose-950 block">Server Connection Error</span>
-                <span className="text-rose-850 leading-normal block">{serverConnectionError}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleCopyPlainText}
-              className="text-[10px] bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg shrink-0 shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 self-stretch sm:self-auto justify-center"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy Email to Clipboard</span>
-            </button>
-          </div>
-        )}
-
-        {/* Universal Email & Google Connection Manager Component */}
-        <EmailConnectionManager
-          isAuthenticated={isAuthenticated}
-          isGuestMode={isGuestMode}
-          user={{ name: currentHostName, email: currentUserEmail }}
-          currentUserEmail={currentUserEmail}
-          isEmailConnected={isEmailConnected}
-          isGoogleConnected={isGoogleConnected}
-          driveUser={driveUser}
-          emailConnectionType={emailConnectionType}
-          setEmailConnectionType={setEmailConnectionType}
-          smtpConfig={smtpConfig}
-          setSmtpConfig={setSmtpConfig}
-          smtpConfigSaved={smtpConfigSaved}
-          setSmtpConfigSaved={setSmtpConfigSaved}
-          smtpSaveSuccessMessage={smtpSaveSuccessMessage}
-          setSmtpSaveSuccessMessage={setSmtpSaveSuccessMessage}
-          googleSignIn={googleSignIn}
-          googleSignOut={googleSignOut}
-          setDriveUser={setDriveUser}
-          setDriveAccessToken={setDriveAccessToken}
-          setDriveFiles={setDriveFiles}
-          setSmtpStatus={setSmtpStatus}
-          setSmtpLogs={setSmtpLogs}
-          setGmailConnectionWarning={setGmailConnectionWarning}
-          setPreLoginWarning={setPreLoginWarning}
-          setError={setError}
-          setAgentLogs={setAgentLogs}
-          onOpenPrivacy={() => setActiveLegalModal("privacy")}
-          onOpenTerms={() => setActiveLegalModal("terms")}
-          onOpenLoginModal={() => {
-            setSetupName("");
-            setSetupEmail("");
-            setSetupPassword("");
-            setAuthModalMode("login");
-            setSetupError(null);
-            setIsSetupModalOpen(true);
-          }}
-        />
-
-        {/* Subject Line Input Block */}
-        <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-2 text-left">
-          <label className="text-[10px] uppercase font-bold text-slate-550 block flex items-center gap-1.5">
-            <Mail className="w-3.5 h-3.5 text-indigo-600" />
-            <span className="text-slate-600 font-bold">Subject Line</span>
-          </label>
-          <input
-            type="text"
-            value={emailSubject}
-            onChange={(e) => {
-              setEmailSubject(e.target.value);
-              setHasUserEditedSubject(true);
-            }}
-            placeholder="Enter email subject line..."
-            className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:border-indigo-500 font-semibold text-slate-800 shadow-2xs"
-          />
-        </div>
-
-        {/* Recipients Manager Block */}
-        <div id="email-recipients-box" className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 text-left transition-all">
-          <div className="flex items-center justify-between">
-            <label className="text-[10px] uppercase font-bold text-slate-550 block flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="text-slate-600 font-bold">Email Recipients (To:)</span>
-            </label>
-            <span className="text-[9px] font-mono text-slate-450 font-bold">
-              {recipients.length} Recipient{recipients.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-
-          {/* Recipient Validation Alert Banner */}
-          {!currentRecipientsValidation.isValid && currentRecipientsValidation.reason && (
-            <div className="bg-rose-50 border border-rose-300 rounded-lg p-2.5 text-[11px] text-rose-950 flex items-center gap-2 shadow-2xs animate-fade-in">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span className="font-extrabold text-rose-900 leading-snug">
-                Invalid recipient address detected. Please update before sending.
-              </span>
-            </div>
-          )}
-
-          {/* Recipient Badges */}
-          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-white border border-slate-150 rounded-lg min-h-[38px]">
-            {recipients.length === 0 ? (
-              <span className="text-[10px] text-slate-400 italic p-1">No recipients specified. Enter an email below to add.</span>
-            ) : (
-              recipients.map((email, i) => {
-                const singleVal = validateRecipientEmail(email);
-                const isErr = !singleVal.isValid;
-                return (
-                  <span
-                    key={i}
-                    className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 font-semibold transition-all ${isErr
-                      ? "bg-rose-100 text-rose-900 border border-rose-300 ring-1 ring-rose-300/40"
-                      : "bg-indigo-50 text-indigo-700 border border-indigo-100"
-                      }`}
-                    title={isErr ? singleVal.message : undefined}
-                  >
-                    {isErr && <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />}
-                    <span>{email}</span>
-                    {isErr && (
-                      <span className="text-[8.5px] uppercase tracking-wider font-extrabold text-rose-700 font-mono">
-                        (Invalid)
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setRecipients(prev => prev.filter((_, idx) => idx !== i))}
-                      className="text-slate-400 hover:text-slate-700 font-bold text-[10px] pl-0.5 cursor-pointer ml-0.5"
-                    >
-                      ×
-                    </button>
-                  </span>
-                );
-              })
-            )}
-          </div>
-
-          {/* Add recipient form */}
-          <div className="flex gap-2">
-            <input
-              type="email"
-              placeholder="Add recipient email address..."
-              value={newRecipientInput}
-              onChange={(e) => setNewRecipientInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (newRecipientInput.trim() && !recipients.includes(newRecipientInput.trim())) {
-                    setRecipients(prev => [...prev, newRecipientInput.trim()]);
-                    setNewRecipientInput("");
-                  }
-                }
-              }}
-              className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:border-indigo-500 font-medium"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (newRecipientInput.trim() && !recipients.includes(newRecipientInput.trim())) {
-                  setRecipients(prev => [...prev, newRecipientInput.trim()]);
-                  setNewRecipientInput("");
-                }
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Main Workspace Render */}
-        {emailMode === "edit" ? (
-          <div className="space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                <span>You are editing the Markdown draft directly.</span>
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEmailMode("preview")}
-                  className="text-[10px] bg-white hover:bg-slate-50 border border-slate-200 font-bold px-2.5 py-1 rounded-lg text-slate-700 transition-colors flex items-center gap-1 shadow-3xs cursor-pointer"
-                >
-                  <Eye className="w-3 h-3 text-indigo-600" />
-                  Preview Formatted
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResetDraft}
-                  className="text-[10px] bg-white hover:bg-slate-50 border border-slate-200 font-bold px-2.5 py-1 rounded-lg text-indigo-600 transition-colors flex items-center gap-1 shadow-3xs cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset Draft
-                </button>
-              </div>
-            </div>
-            <textarea
-              value={editedEmail}
-              onChange={(e) => {
-                setEditedEmail(e.target.value);
-                setHasUserEdited(true);
-              }}
-              rows={15}
-              className="w-full p-4 text-xs font-mono border border-slate-200 rounded-xl focus:outline-hidden focus:border-indigo-500 resize-y bg-white shadow-inner"
-              placeholder="Type or edit meeting recap email body here..."
-            />
-          </div>
-        ) : (
-          <div className="relative group">
-            <div className="prose prose-slate max-w-none text-xs border border-slate-200 rounded-xl p-5 bg-white max-h-[440px] overflow-y-auto leading-relaxed font-serif text-slate-800 shadow-2xs">
-              <Markdown>{editedEmail}</Markdown>
-            </div>
-            <button
-              type="button"
-              onClick={() => setEmailMode("edit")}
-              className="absolute top-3 right-3 opacity-90 group-hover:opacity-100 transition-opacity bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 shadow-md flex items-center gap-1 cursor-pointer"
-            >
-              <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Edit Draft Content</span>
-            </button>
-          </div>
-        )}
-
-        {/* Sticky Footer Action Bar */}
-        <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 mt-2">
-          {isMailtoTooLong && (
-            <div className="flex flex-row items-center justify-between gap-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 font-bold shadow-2xs w-full">
-              <div className="flex items-center gap-2 min-w-0">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span className="truncate">
-                  ⚠️ Draft exceeds 2,000 chars (Too long for desktop mailto link).
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={handleAutoShortenDraft}
-                className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs text-[10px] uppercase tracking-wider flex items-center gap-1 shrink-0"
-              >
-                ⚡ Auto-Shorten Draft
-              </button>
-            </div>
-          )}
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="text-[10px] text-slate-450 flex items-center gap-1.5 font-mono">
-              <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span>
-                Selected follow-up Option <strong>#{selectedSlotIndex + 1}</strong> is pre-populated.
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
-              <button
-                onClick={handleCopyMarkdown}
-                className="flex-1 sm:flex-initial bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                {copiedMarkdown ? (
-                  <>
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-emerald-700">Copied Markdown!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy Raw Markdown</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                id="copy-draft-content-btn"
-                onClick={handleCopyPlainText}
-                className="flex-1 sm:flex-initial bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                {copiedPlainText ? (
-                  <>
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-emerald-700">Copied Draft Content!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Copy Draft Content</span>
-                  </>
-                )}
-              </button>
-
-              {isMailtoTooLong ? (
-                <button
-                  id="send-draft-email-client-btn"
-                  disabled
-                  className="flex-1 sm:flex-initial bg-slate-100 border border-slate-200 text-slate-400 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-not-allowed opacity-60"
-                  title="Mailto link disabled because draft exceeds 2,000 char desktop limit. Use 'Send Directly from App' or 'Copy Draft Content'."
-                >
-                  <Mail className="w-3.5 h-3.5 text-slate-350" />
-                  <span>Open in Email Client</span>
-                </button>
-              ) : (
-                <a
-                  id="send-draft-email-client-btn"
-                  href={mailtoLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleOpenEmailClient}
-                  className="flex-1 sm:flex-initial bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                >
-                  <Mail className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Open in Email Client</span>
-                </a>
-              )}
-
-              <button
-                id="send-draft-email-direct-btn"
-                onClick={handleSendDirectly}
-                disabled={smtpStatus === "sending" || recipients.length === 0}
-                title={!isEmailConnected ? "No Outbox Connected. Connect an account above or copy draft content." : ""}
-                className={`flex-1 sm:flex-initial text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-indigo-100 ${smtpStatus === "sending" ? "bg-indigo-600 opacity-60 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
-                  }`}
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{smtpStatus === "sending" ? "Sending..." : "Send Directly from App"}</span>
-              </button>
-
-              <button
-                id="finish-and-clear-session-btn"
-                onClick={handleFinishAndClear}
-                className="flex-1 sm:flex-initial bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                title="Wipe workspace session memory and return to main workflow view for a new meeting"
-              >
-                <CheckCheck className="w-3.5 h-3.5 text-rose-600" />
-                <span>Finish & Clear Session</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Email Connection Required Alert Banner */}
-        {(!isGoogleConnected && !isSmtpConnected) && (
-          <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl p-3.5 text-[11px] text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs text-left animate-fade-in">
-            <div className="flex items-start gap-2.5 flex-1">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <span className="font-extrabold text-amber-950 block text-[11.5px]">No Outbox Connected</span>
-                <span className="text-amber-850 leading-normal block">
-                  Please connect an email account above to dispatch directly from the app, or use the 'Copy Draft Content' button to paste this email into your preferred email provider.
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto">
-              <button
-                type="button"
-                onClick={handleCopyPlainText}
-                className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 justify-center flex-1 sm:flex-initial"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copy Draft Content</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const card = document.getElementById("email-account-connect-card") || document.getElementById("google-account-connect-card");
-                  if (card) {
-                    card.scrollIntoView({ behavior: "smooth", block: "center" });
-                    card.classList.add("ring-2", "ring-indigo-500");
-                    setTimeout(() => {
-                      card.classList.remove("ring-2", "ring-indigo-500");
-                    }, 2500);
-                  }
-                }}
-                className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1 justify-center flex-1 sm:flex-initial"
-              >
-                <span>Connect Account</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* SMTP Transmission Logs & Inline Status */}
-        {(smtpStatus === "sending" || smtpStatus === "sent" || smtpStatus === "error") && (
-          <div className="bg-slate-900 border border-slate-800 text-slate-100 p-4 rounded-xl space-y-2.5 text-left font-mono text-[10px] mt-4 shadow-inner">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-              <span className="font-bold flex items-center gap-1.5 text-indigo-400">
-                <Cpu className={`w-3.5 h-3.5 ${smtpStatus === "sending" ? "animate-spin" : ""}`} />
-                <span>SMTP Live Pipeline</span>
-              </span>
-              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wide ${smtpStatus === "sending" ? "bg-amber-500/15 text-amber-400" :
-                smtpStatus === "error" ? "bg-rose-500/20 text-rose-400 font-extrabold border border-rose-500/30" :
-                  "bg-emerald-500/15 text-emerald-400"
-                }`}>
-                {smtpStatus === "sending" ? "TRANSMITTING..." :
-                  smtpStatus === "error" ? "TRANSMISSION FAILED" :
-                    "SUCCESSFULLY DELIVERED"}
-              </span>
-            </div>
-            <div className="max-h-36 overflow-y-auto space-y-1">
-              {smtpLogs.map((log, index) => (
-                <div key={index} className={`leading-relaxed whitespace-pre-wrap ${log.includes('FAILED') || log.includes('❌') ? 'text-rose-400 font-semibold' : ''}`}>
-                  {log}
-                </div>
-              ))}
-            </div>
-            {smtpStatus === "error" && (
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                <span className="text-[9.5px] text-slate-400">Dispatch error. Use fallback option:</span>
-                <button
-                  type="button"
-                  onClick={handleCopyPlainText}
-                  className="bg-rose-600 hover:bg-rose-700 text-white font-sans font-bold px-2.5 py-1 rounded text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow-xs shrink-0"
-                >
-                  <Copy className="w-3 h-3" />
-                  <span>Copy Email to Clipboard</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </motion.div>
-    )
-  )
-}
-
-{/* TAB 5: RECURRING MEETING THREADS */ }
-{
-  activeTab === "threads" && (
-    !isUserLoggedIn ? (
-      <div className="text-center py-16 bg-slate-50 border border-slate-200 rounded-xl p-8 max-w-md mx-auto space-y-4 my-8">
-        <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mx-auto text-indigo-600">
-          <Lock className="w-6 h-6" />
-        </div>
-        <div>
-          <h3 className="text-base font-bold text-slate-800">Recurring Threads Hub Locked</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            A Primary Account is required to create, view, and organize recurring meeting threads and history.
-          </p>
-        </div>
-        <button
-          onClick={() => setIsSetupModalOpen(true)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
-        >
-          Sign In to Access Recurring Threads
-        </button>
-      </div>
-    ) : (
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-5"
-      >
-        <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-              <History className="w-4 h-4 text-indigo-600" />
-              Recurring Meeting Threads Hub
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Consolidate and search past summaries, rolling action items, and schedules for recurring series.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* Threads List Sidebar */}
-          <div className="lg:col-span-4 bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-4">
-            <div className="space-y-2">
-              <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block">
-                New Recurring Thread
-              </label>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  placeholder="Weekly Sync, Standup..."
-                  value={createThreadNameInput}
-                  onChange={(e) => setCreateThreadNameInput(e.target.value)}
-                  className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-hidden"
-                />
-                <button
-                  onClick={() => handleCreateThreadInHub(createThreadNameInput)}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-center transition-colors shadow-xs"
-                  title="Create Thread"
-                >
-                  <FolderPlus className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block">
-                Active Threads ({visibleThreads.length})
-              </label>
-
-              {visibleThreads.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 text-xs font-mono">
-                  No authorized threads visible. Use the input above to create one.
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                  {visibleThreads.map((t) => {
-                    const isActive = t.id === activeThreadId;
-                    return (
-                      <div
-                        key={t.id}
-                        onClick={() => setActiveThreadId(t.id)}
-                        className={`p-3 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${isActive
-                          ? "bg-white border-indigo-500 shadow-xs ring-1 ring-indigo-50"
-                          : "bg-white/60 border-slate-200 hover:border-slate-300"
-                          }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-bold text-slate-800 truncate">{t.title}</div>
-                          <div className="text-[9px] text-slate-450 font-mono mt-0.5 flex items-center gap-1.5">
-                            <span>{t.entries.length} session{t.entries.length !== 1 ? "s" : ""}</span>
-                            <span>•</span>
-                            <span>Created {t.createdAt}</span>
-                          </div>
-                        </div>
-                        {!t.ownerEmail || t.ownerEmail === currentUserEmail ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteThread(t.id);
-                            }}
-                            className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-all cursor-pointer shrink-0"
-                            title="Delete Thread"
+                        <div className="flex flex-1 items-center gap-2 min-w-[220px]">
+                          <select
+                            value={recapThreadSelectId}
+                            onChange={(e) => setRecapThreadSelectId(e.target.value)}
+                            disabled={!ownedThreads.length}
+                            className="w-full text-[11px] px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium focus:outline-none focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <option value="">Select existing owned thread</option>
+                            {ownedThreads.map((thread) => (
+                              <option key={thread.id} value={thread.id}>{thread.title}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={handleSaveRecapToExistingThread}
+                            disabled={!recapThreadSelectId || !ownedThreads.length}
+                            className="whitespace-nowrap bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-700 font-semibold text-[11px] px-3 py-2 rounded-lg transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            Add Iteration
                           </button>
-                        ) : (
-                          <span className="text-slate-300 p-1.5 shrink-0" title="Only the owner can delete this thread">
-                            <Lock className="w-3.5 h-3.5" />
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Thread Detail Workspace */}
-          <div className="lg:col-span-8 space-y-4">
-            {(() => {
-              const activeThread = visibleThreads.find(t => t.id === activeThreadId);
-              if (!activeThread) {
-                return (
-                  <div className="text-center py-20 bg-slate-50/35 rounded-xl border border-slate-150 flex flex-col items-center justify-center">
-                    <History className="w-10 h-10 text-slate-300 mb-2.5 animate-pulse" />
-                    <p className="text-xs text-slate-500 font-medium">Select or create a recurring meeting thread to view details.</p>
-                  </div>
-                );
-              }
-
-              // Calculate aggregate rolling tasks
-              const allTasks = activeThread.entries.flatMap(e =>
-                e.actionItems.map((item, idx) => ({
-                  ...item,
-                  entryId: e.id,
-                  entryTitle: e.meetingTitle || e.recapTitle,
-                  entryDate: e.dateStr,
-                  originalIndex: idx
-                }))
-              );
-              const completedCount = allTasks.filter(t => t.completed).length;
-              const totalCount = allTasks.length;
-              const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-
-              return (
-                <div className="space-y-4">
-                  {/* Thread Header */}
-                  <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[8px] uppercase tracking-widest font-bold text-indigo-400 font-mono">Recurring Meeting Thread Workspace</div>
-                      <h4 className="text-xs font-bold mt-0.5">{activeThread.title}</h4>
-                      <div className="text-[10px] text-slate-300 mt-1 flex flex-wrap items-center gap-2">
-                        <span>{activeThread.entries.length} logged sessions</span>
-                        <span>•</span>
-                        <span>{completedCount}/{totalCount} tasks completed ({completionRate}%)</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
-                      <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700 w-full sm:w-auto justify-center">
-                        <button
-                          onClick={() => {
-                            setThreadSubTab("timeline");
-                          }}
-                          className={`flex-1 sm:flex-initial px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all cursor-pointer ${threadSubTab === "timeline" ? "bg-white text-slate-900 shadow-xs" : "text-slate-400 hover:text-white"
-                            }`}
-                        >
-                          Session Timeline
-                        </button>
-                        <button
-                          onClick={() => {
-                            setThreadSubTab("tasks");
-                          }}
-                          className={`flex-1 sm:flex-initial px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all cursor-pointer ${threadSubTab === "tasks" ? "bg-white text-slate-900 shadow-xs" : "text-slate-400 hover:text-white"
-                            }`}
-                        >
-                          Rolling Tasks
-                        </button>
-                      </div>
-
-                      {activeThread.ownerEmail === currentUserEmail && (
-                        <button
-                          onClick={() => handleDeleteThread(activeThread.id)}
-                          className="text-red-400 hover:text-white hover:bg-red-600/90 border border-red-500/30 px-3 py-1.5 rounded-md transition-all cursor-pointer text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 w-full sm:w-auto"
-                          title="Delete Entire Recurring Thread"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Delete Thread
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Thread Access & Member Management */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-150/80 pb-2">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <div>
-                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-700">Thread Access Control</h4>
-                          <p className="text-[9px] text-slate-500">Only authorized members can view or manage this recurring thread.</p>
-                        </div>
-                      </div>
-                      <div className="text-[9px] font-bold font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-md shrink-0">
-                        {activeThread.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Read/Write Access"}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Members List */}
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Current Members</span>
-                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
-                          {/* Owner */}
-                          <div className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-[9px] shrink-0">
-                                {userProfiles.find(p => p.email === activeThread.ownerEmail)?.avatar || "👤"}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="font-bold text-slate-700 truncate">
-                                  {userProfiles.find(p => p.email === activeThread.ownerEmail)?.name || activeThread.ownerEmail}
-                                </p>
-                                <p className="text-[9px] text-slate-400 truncate">{activeThread.ownerEmail}</p>
-                              </div>
-                            </div>
-                            <span className="text-[8px] font-bold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-mono shrink-0">Owner</span>
-                          </div>
-
-                          {/* Allowed members */}
-                          {(!activeThread.allowedEmails || activeThread.allowedEmails.length === 0) ? (
-                            <div className="text-[10px] text-slate-400 italic py-1 pl-1">No other members added to this thread.</div>
-                          ) : (
-                            activeThread.allowedEmails.map((email) => {
-                              const profile = userProfiles.find(p => p.email === email);
-                              return (
-                                <div key={email} className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <div className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center justify-center font-bold text-[9px] shrink-0">
-                                      {profile?.avatar || "👤"}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="font-bold text-slate-700 truncate">{profile?.name || email}</p>
-                                      <p className="text-[9px] text-slate-450 truncate">{email}</p>
-                                    </div>
-                                  </div>
-                                  {activeThread.ownerEmail === currentUserEmail ? (
-                                    <button
-                                      onClick={() => handleRemoveMemberFromThread(activeThread.id, email)}
-                                      className="text-red-500 hover:bg-red-50 hover:text-red-700 px-2 py-1 rounded-md transition-colors font-bold text-[10px] cursor-pointer"
-                                      title="Remove Access"
-                                    >
-                                      Remove
-                                    </button>
-                                  ) : (
-                                    <span className="text-[8px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded font-mono shrink-0">Member</span>
-                                  )}
-                                </div>
-                              );
-                            })
-                          )}
                         </div>
                       </div>
 
-                      {/* Add Member Form (Only visible to owner) */}
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Grant Thread Access</span>
-                        {activeThread.ownerEmail === currentUserEmail ? (
-                          <div className="space-y-2 bg-white border border-slate-150 p-2.5 rounded-lg shadow-2xs">
-                            <p className="text-[10px] text-slate-500">Authorize another colleague to view this rolling thread and log meetings.</p>
-                            <div className="flex gap-2">
-                              <select
-                                id="add-member-select"
-                                className="flex-1 text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md focus:outline-hidden text-slate-700 font-semibold cursor-pointer"
-                                defaultValue=""
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  if (val) {
-                                    handleAddMemberToThread(activeThread.id, val);
-                                    e.target.value = ""; // Reset
-                                  }
-                                }}
-                              >
-                                <option value="" disabled>-- Select colleague to add --</option>
-                                {userProfiles.filter(p => p.email !== activeThread.ownerEmail && !activeThread.allowedEmails?.includes(p.email))
-                                  .map((p, idx) => (
-                                    <option key={`${p.email}-${idx}`} value={p.email}>{p.name} ({p.email})</option>
-                                  ))
-                                }
-                              </select>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="bg-slate-100 border border-dashed border-slate-200 p-3 rounded-lg text-center flex flex-col items-center justify-center h-[90px]">
-                            <Lock className="w-4 h-4 text-slate-400 mb-1" />
-                            <p className="text-[10px] text-slate-500 font-medium">Only the thread owner can grant access to others.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Thread SubTab Timeline */}
-                  {threadSubTab === "timeline" && (
-                    <div className="space-y-3">
-                      {activeThread.entries.length === 0 ? (
-                        <div className="text-center py-12 bg-slate-50/50 rounded-lg border border-slate-200">
-                          <History className="w-8 h-8 text-slate-400 mx-auto mb-2 animate-pulse" />
-                          <p className="text-xs text-slate-500 font-medium">This thread is currently empty.</p>
-                          <p className="text-[10px] text-slate-450 mt-1">Generate a meeting recap and click "Save Recap to Thread" above to log a session.</p>
-                        </div>
-                      ) : (
-                        <div className="relative border-l border-indigo-100 ml-3 pl-4 space-y-4 pt-1">
-                          {activeThread.entries.map((entry) => {
-                            const isExpanded = expandedEntryIds[entry.id] ?? true;
-                            return (
-                              <div key={entry.id} className="relative group">
-                                {/* Timeline Node dot */}
-                                <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-4 ring-white group-hover:bg-indigo-600 transition-colors"></span>
-
-                                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-2xs hover:shadow-xs transition-all">
-                                  {/* Header Bar */}
-                                  <div
-                                    onClick={() => setExpandedEntryIds(prev => ({ ...prev, [entry.id]: !isExpanded }))}
-                                    className="bg-slate-50/60 hover:bg-slate-50 px-3.5 py-2.5 flex items-center justify-between gap-3 cursor-pointer select-none"
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-[9px] font-bold font-mono text-indigo-600 px-1.5 py-0.2 bg-indigo-50 rounded">
-                                          {entry.dateStr}
-                                        </span>
-                                        {entry.selectedSlot && (
-                                          <span className="text-[8px] font-bold text-slate-500 bg-slate-100 px-1 rounded flex items-center gap-0.5 truncate max-w-[150px]" title={`Follow-up Scheduled: ${entry.selectedSlot.dateStr} at ${entry.selectedSlot.timeStr}`}>
-                                            <Clock className="w-2.5 h-2.5 shrink-0" />
-                                            {entry.selectedSlot.timeStr}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <h5 className="text-[11px] font-bold text-slate-800 mt-1 truncate">{entry.meetingTitle}</h5>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteEntry(activeThread.id, entry.id);
-                                        }}
-                                        className="text-slate-300 hover:text-red-500 p-1 rounded transition-colors cursor-pointer"
-                                        title="Delete Entry"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <ChevronDown className={`w-4 h-4 text-slate-450 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                                    </div>
-                                  </div>
-
-                                  {/* Content Body */}
-                                  {isExpanded && (
-                                    <div className="p-4 space-y-3.5 border-t border-slate-100 text-xs">
-                                      {/* Summary */}
-                                      <div className="space-y-1">
-                                        <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Executive Summary</div>
-                                        <p className="text-slate-600 font-serif leading-relaxed text-[11px]">{entry.summary}</p>
-                                      </div>
-
-                                      {/* Topics & Agenda */}
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-50">
-                                        <div>
-                                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Key Topics Discussed</div>
-                                          <div className="flex flex-wrap gap-1">
-                                            {entry.keyTopics.map((topic, i) => (
-                                              <span key={i} className="text-[9px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-semibold font-sans">
-                                                {topic}
-                                              </span>
-                                            ))}
-                                          </div>
-                                        </div>
-                                        <div>
-                                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Proposed Agenda</div>
-                                          <ul className="list-decimal list-inside text-slate-600 text-[10px] space-y-0.5 font-medium">
-                                            {entry.suggestedAgenda.map((agenda, i) => (
-                                              <li key={i} className="truncate">{agenda}</li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      </div>
-
-                                      {/* Entry Specific Tasks */}
-                                      <div className="pt-2.5 border-t border-slate-50 space-y-1.5">
-                                        <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Action Items</div>
-                                        {entry.actionItems.length === 0 ? (
-                                          <div className="text-[10px] text-slate-400 italic">No action items found for this session.</div>
-                                        ) : (
-                                          <div className="space-y-1.5">
-                                            {entry.actionItems.map((item, idx) => (
-                                              <div
-                                                key={idx}
-                                                className={`flex items-start gap-2 p-1.5 rounded transition-colors ${item.completed ? "bg-slate-50/40 opacity-70" : "bg-white"
-                                                  }`}
-                                              >
-                                                <input
-                                                  type="checkbox"
-                                                  checked={item.completed ?? false}
-                                                  onChange={() => toggleThreadEntryActionItem(activeThread.id, entry.id, idx)}
-                                                  className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                                />
-                                                <div className="min-w-0 flex-1 leading-normal">
-                                                  <span className={`text-[11px] font-semibold text-slate-700 ${item.completed ? "line-through text-slate-400" : ""}`}>
-                                                    {item.task}
-                                                  </span>
-                                                  {item.nextSteps && (
-                                                    <div className="mt-1 text-[10px] text-slate-500 bg-slate-50 border border-slate-100/60 rounded-md p-1 leading-relaxed">
-                                                      <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-500 tracking-wider mr-1">Next Steps:</span>
-                                                      {item.nextSteps}
-                                                    </div>
-                                                  )}
-                                                  <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 font-mono">
-                                                    <span className="font-bold text-slate-500 bg-slate-100 px-1 rounded">{item.assignee}</span>
-                                                    {item.deadline && (
-                                                      <span>• Due: {item.deadline}</span>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Thread SubTab Rolling Tasks */}
-                  {threadSubTab === "tasks" && (
-                    <div className="space-y-3">
-                      {/* Completion Meter */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
-                        <div className="flex justify-between items-center mb-1.5">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Thread Task Progress</span>
-                          <span className="text-xs font-mono font-bold text-indigo-600">{completedCount} / {totalCount} ({completionRate}%)</span>
-                        </div>
-                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                          <div
-                            className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-                            style={{ width: `${completionRate}%` }}
-                          ></div>
-                        </div>
-                      </div>
-
-                      {/* Action items list */}
-                      {allTasks.length === 0 ? (
-                        <div className="text-center py-10 bg-slate-50/50 rounded-lg border border-slate-200 text-xs text-slate-400 italic">
-                          No rolling tasks found in any of the logged sessions yet.
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {allTasks.map((task, i) => (
-                            <div
-                              key={i}
-                              className={`bg-white border border-slate-200 rounded-lg p-3 flex items-start gap-2.5 shadow-2xs hover:border-slate-300 transition-colors ${task.completed ? "bg-slate-50/40 opacity-70" : ""
-                                }`}
+                      {recapThreadMode === "new" && (
+                        <div className="flex flex-col gap-2 rounded-lg border border-indigo-200 bg-white/80 p-2.5">
+                          <label className="text-[9px] font-bold uppercase tracking-wider text-slate-500">New recurring thread title</label>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <input
+                              type="text"
+                              value={recapNewThreadTitle}
+                              onChange={(e) => setRecapNewThreadTitle(e.target.value)}
+                              placeholder="e.g. Weekly Product Sync"
+                              className="flex-1 text-xs px-2.5 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSaveRecapToNewThread}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-2 rounded-lg transition-all cursor-pointer"
                             >
-                              <input
-                                type="checkbox"
-                                checked={task.completed ?? false}
-                                onChange={() => toggleThreadEntryActionItem(activeThread.id, task.entryId, task.originalIndex)}
-                                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
-                              />
-                              <div className="min-w-0 flex-1 leading-normal">
-                                <span className={`text-xs font-bold text-slate-800 ${task.completed ? "line-through text-slate-400" : ""}`}>
-                                  {task.task}
-                                </span>
-                                {task.nextSteps && (
-                                  <div className="mt-1 text-[10px] text-slate-500 bg-slate-50 border border-slate-100/60 rounded-md p-1 leading-relaxed">
-                                    <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-500 tracking-wider mr-1">Next Steps:</span>
-                                    {task.nextSteps}
+                              Create & Save
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Executive Summary Card - Serif Typography */}
+                    <div className="bg-slate-50/50 rounded-lg p-4 border border-slate-100 font-serif text-slate-700 leading-relaxed text-xs">
+                      <h4 className="text-[10px] font-sans font-bold text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-indigo-500" />
+                        Executive Summary
+                      </h4>
+                      <p className="font-serif">{recapData.summary}</p>
+                    </div>
+
+                    {/* Key Topics Grid */}
+                    <div>
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+                        Key Topics Discussed
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {recapData.keyTopics.map((topic, i) => (
+                          <div key={i} className="flex items-start gap-2 p-2 bg-slate-50/50 border border-slate-100 rounded">
+                            <span className="text-xs text-indigo-500 font-mono font-bold">•</span>
+                            <span className="text-xs text-slate-700 font-medium">{topic}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Action Items Interactive Checklist */}
+                    <div>
+                      {isExportDropdownOpen && (
+                        <div className="fixed inset-0 z-40" onClick={() => setIsExportDropdownOpen(false)} />
+                      )}
+
+                      <div className="flex items-center justify-between mb-2.5 relative">
+                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          Action Items Checklist
+                        </h4>
+
+                        <div className="relative z-50">
+                          <button
+                            id="export-tasks-btn"
+                            onClick={() => setIsExportDropdownOpen(!isExportDropdownOpen)}
+                            className="text-[10px] bg-white hover:bg-indigo-50 hover:border-indigo-300 border border-slate-200 text-indigo-700 font-bold px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          >
+                            <FileCheck className="w-3.5 h-3.5 text-indigo-600" />
+                            Multi-Platform Export
+                            <ChevronDown className={`w-3 h-3 transition-transform ${isExportDropdownOpen ? "rotate-180" : ""}`} />
+                          </button>
+
+                          <AnimatePresence>
+                            {isExportDropdownOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 5, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 5, scale: 0.95 }}
+                                transition={{ duration: 0.15 }}
+                                className="absolute right-0 mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-50 p-1.5 space-y-0.5"
+                              >
+                                <div className="text-[9px] uppercase font-mono tracking-widest text-slate-400 font-bold px-2 py-1">
+                                  Export Formats
+                                </div>
+
+                                <button
+                                  id="export-jira-btn"
+                                  onClick={() => {
+                                    handleExportJira();
+                                    setIsExportDropdownOpen(false);
+                                  }}
+                                  className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    Jira / Confluence Markup
+                                  </span>
+                                  {copiedFormat === "jira" ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <Copy className="w-3 h-3 text-slate-400 shrink-0" />
+                                  )}
+                                </button>
+
+                                <button
+                                  id="export-markdown-btn"
+                                  onClick={() => {
+                                    handleExportMarkdown();
+                                    setIsExportDropdownOpen(false);
+                                  }}
+                                  className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+                                    Markdown Checkboxes
+                                  </span>
+                                  {copiedFormat === "markdown" ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <Copy className="w-3 h-3 text-slate-400 shrink-0" />
+                                  )}
+                                </button>
+
+                                <button
+                                  id="export-csv-btn"
+                                  onClick={() => {
+                                    handleExportCSV();
+                                    setIsExportDropdownOpen(false);
+                                  }}
+                                  className="w-full text-left flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                    Asana / Trello (CSV)
+                                  </span>
+                                  {copiedFormat === "csv" ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <Download className="w-3 h-3 text-slate-400 shrink-0" />
+                                  )}
+                                </button>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </div>
+
+                      {recapData.actionItems.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic p-3 bg-slate-50 rounded-lg text-center">
+                          No clear action items extracted from discussion.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {recapData.actionItems.map((item, index) => (
+                            <button
+                              key={index}
+                              onClick={() => toggleActionItem(index)}
+                              className={`w-full text-left flex items-start gap-3 p-2.5 rounded-lg border transition-all cursor-pointer ${item.completed
+                                ? "bg-emerald-50/20 border-emerald-100 opacity-60 line-through text-slate-500"
+                                : "bg-white border-slate-150 hover:border-indigo-200 hover:bg-indigo-50/5"
+                              }`}
+                            >
+                              <div className="mt-0.5 shrink-0">
+                                {item.completed ? (
+                                  <div className="bg-emerald-500 text-white p-0.5 rounded">
+                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                  </div>
+                                ) : (
+                                  <div className="w-3.5 h-3.5 border border-slate-300 rounded bg-white hover:border-indigo-500 transition-colors" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-semibold leading-normal text-slate-800">{item.task}</div>
+                                {item.nextSteps && (
+                                  <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="mt-1.5 text-[10px] text-slate-600 bg-slate-50/80 border border-slate-150/40 rounded-md p-1.5 font-sans leading-relaxed"
+                                  >
+                                    <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-600 tracking-wider mr-1">Next Steps:</span>
+                                    {item.nextSteps}
                                   </div>
                                 )}
-                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-450 mt-1 font-mono">
-                                  <span className="font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded">{task.assignee}</span>
-                                  {task.deadline && (
-                                    <span className="flex items-center gap-0.5 text-slate-500">📅 Due {task.deadline}</span>
-                                  )}
-                                  <span className="text-slate-300">•</span>
-                                  <span className="text-slate-500 truncate max-w-[180px]" title={task.entryTitle}>
-                                    From: {task.entryDate} - {task.entryTitle}
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[9px] font-mono">
+                                  <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded font-bold">
+                                    Owner: {item.assignee}
                                   </span>
+                                  {item.deadline && item.deadline !== "Not specified" && (
+                                    <span className="bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded font-bold">
+                                      Due: {item.deadline}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
-                            </div>
+                            </button>
                           ))}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      </motion.div>
-    )
-  )
-}
 
-                  </div >
-                </div >
+                    {/* Suggested Agenda Card */}
+                    <div className="border-t border-slate-100 pt-3">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
+                        Suggested Agenda for Follow-up Sync
+                      </h4>
+                      <ol className="space-y-1">
+                        {recapData.suggestedAgenda.map((agenda, i) => (
+                          <li key={i} className="flex items-center gap-2 text-xs text-slate-600">
+                            <span className="font-mono text-indigo-600 font-bold bg-indigo-50/60 w-4.5 h-4.5 rounded flex items-center justify-center text-[9px] shrink-0">
+                              {i + 1}
+                            </span>
+                            <span>{agenda}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  </motion.div>
+                )
               )}
 
-            </section >
-
-          </div >
-        </main >
-
-  {/* Global Workspace Page Footer */ }
-  < footer className = "border-t border-slate-200 bg-white py-6 pb-20 sm:pb-16 mt-16 text-center text-[11px] text-slate-500 font-mono" >
-    <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-center">
-      <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-slate-500 text-xs font-sans">
-        <span className="font-semibold text-slate-700">© 2026 Cadence Desk</span>
-        <span className="hidden sm:inline text-slate-300">•</span>
-        <span className="text-slate-500 text-[11px] font-mono uppercase tracking-wider">
-          Zero-Cloud Intelligent Meeting Workspace
-        </span>
-      </div>
-      <span className="hidden sm:inline text-slate-300">•</span>
-      <div className="flex items-center justify-center gap-4 text-slate-600 font-sans text-xs font-medium shrink-0">
-        <button
-          type="button"
-          onClick={() => setActiveLegalModal("privacy")}
-          className="hover:text-indigo-600 transition-colors cursor-pointer underline underline-offset-2"
-        >
-          Privacy Policy
-        </button>
-        <span className="text-slate-300">•</span>
-        <button
-          type="button"
-          onClick={() => setActiveLegalModal("terms")}
-          className="hover:text-indigo-600 transition-colors cursor-pointer underline underline-offset-2"
-        >
-          Terms of Service
-        </button>
-      </div>
-    </div>
-        </footer >
-
-  {/* Google Drive Document Browser Modal */ }
-  <AnimatePresence>
-{
-  isDriveModalOpen && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.15 }}
-        className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]"
-      >
-        {/* Header */}
-        <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Cloud className="w-4 h-4 text-indigo-600 animate-pulse" />
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Google Drive Transcript Import
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsDriveModalOpen(false)}
-            className="text-slate-450 hover:text-slate-600 font-bold text-lg p-1"
-          >
-            ×
-          </button>
-        </div>
-
-        {/* Account / Auth Status info */}
-        {driveUser && (
-          <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[10px]">
-            <span className="text-slate-600 font-mono">
-              Connected: <strong>{driveUser.email}</strong>
-            </span>
-            <button
-              type="button"
-              onClick={async () => {
-                await googleSignOut();
-                setDriveUser(null);
-                setDriveAccessToken(null);
-                setDriveFiles([]);
-              }}
-              className="text-red-600 hover:underline font-bold"
-            >
-              Disconnect
-            </button>
-          </div>
-        )}
-
-        {/* Main content body */}
-        <div className="p-4 flex-1 overflow-y-auto space-y-3">
-          {driveError && (
-            <div className="p-2.5 text-[10px] text-red-700 bg-red-50 border border-red-100 rounded-lg flex items-center gap-1.5 font-medium">
-              <span>⚠️ {driveError}</span>
-            </div>
-          )}
-
-          {/* Search query input */}
-          {!isDriveLoading && !isDriveParsing && driveFiles.length > 0 && (
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search Google Drive docs..."
-                value={driveSearchQuery}
-                onChange={(e) => setDriveSearchQuery(e.target.value)}
-                className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:border-indigo-500 font-medium"
-              />
-            </div>
-          )}
-
-          {/* Loading states */}
-          {isDriveLoading && (
-            <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-indigo-600 font-medium">
-              <svg className="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span>Loading files from Google Drive...</span>
-            </div>
-          )}
-
-          {isDriveParsing && (
-            <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-indigo-600 font-medium">
-              <svg className="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span>Downloading and extracting transcript contents...</span>
-            </div>
-          )}
-
-          {/* Files list */}
-          {!isDriveLoading && !isDriveParsing && (
-            <div className="space-y-1.5">
-              {(() => {
-                const filtered = driveFiles.filter((f) =>
-                  f.name.toLowerCase().includes(driveSearchQuery.toLowerCase())
-                );
-
-                if (filtered.length === 0) {
-                  return (
-                    <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg">
-                      <FolderOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                      <p className="text-xs text-slate-500 font-semibold">No supported documents found</p>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Create or upload a Google Doc, .txt, or .docx file in Google Drive!
+              {/* TAB 2: TIMEZONE OVERLAP PLANNER */}
+              {
+                activeTab === "overlap" && (
+                  (!proposedSlots || proposedSlots.length === 0) ? (
+                    <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
+                      <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
+                      <h4 className="text-sm font-bold text-slate-800">No Timezone Overlap Calculated Yet</h4>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                        Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
                       </p>
                     </div>
-                  );
-                }
-
-                return filtered.map((file) => (
-                  <button
-                    key={file.id}
-                    type="button"
-                    onClick={() => handleImportDriveFile(file)}
-                    className="w-full text-left p-2.5 rounded-lg border border-slate-150 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all flex items-center justify-between gap-3 cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <FileText className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-700 truncate group-hover:text-indigo-950">
-                          {file.name}
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4"
+                    >
+                      <div className="border-b border-slate-100 pb-3">
+                        <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                          <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                          Timezone Overlap Solver
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          The scheduler calculated the best 3 slots next week where attendees are awake and free (9:00 AM - 5:00 PM local).
                         </p>
-                        <p className="text-[9px] text-slate-400 font-mono mt-0.5">
-                          {file.mimeType.includes("document") ? "Google Doc" : file.mimeType.includes("word") ? "Word Document" : "Plain Text"}
+                      </div>
+
+                      <div className="space-y-3">
+                        {proposedSlots.map((slot, index) => {
+                          const isSelected = selectedSlotIndex === index;
+                          return (
+                            <div
+                              key={index}
+                              onClick={() => setSelectedSlotIndex(index)}
+                              className={`p-4 rounded-lg border transition-all cursor-pointer ${isSelected
+                                ? "bg-indigo-50/30 border-indigo-500 ring-1 ring-indigo-500"
+                                : "bg-white border-slate-200 hover:border-slate-350"
+                                }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                                <div className="flex items-center gap-2">
+                                  <div className={`text-[9px] px-2 py-0.5 rounded font-bold font-mono ${index === 0
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : index === 1
+                                      ? "bg-blue-100 text-blue-800"
+                                      : "bg-amber-100 text-amber-800"
+                                    }`}>
+                                    OPTION #{index + 1} ({slot.score} PTS)
+                                  </div>
+                                  <div className="text-xs font-bold text-slate-800">
+                                    {slot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider font-mono ${slot.overallRating === "Perfect"
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                    : slot.overallRating === "Good"
+                                      ? "bg-blue-50 text-blue-700 border-blue-100"
+                                      : slot.overallRating === "Challenging"
+                                        ? "bg-amber-50 text-amber-700 border-amber-100"
+                                        : "bg-red-50 text-red-700 border-red-100"
+                                    }`}>
+                                    {slot.overallRatingLabel}
+                                  </span>
+                                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300"
+                                    }`}>
+                                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Local Time Breakdown and Visual Timeline */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50/50 p-3 rounded border border-slate-100">
+                                {/* List with detail */}
+                                <div className="space-y-1.5">
+                                  <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">Local Attendee Times</div>
+                                  <div className="space-y-1">
+                                    {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => {
+                                      const effectiveRoster = (slot.attendees && slot.attendees.length > 1) ? slot.attendees : (attendees.length > 1 ? attendees : globalExtractedAttendeesRef.current);
+                                      const hostTz = effectiveRoster.find(x => x.isHost)?.timezone;
+                                      return (
+                                        <div key={at.attendeeId} className="flex justify-between items-center text-xs">
+                                          <span className="text-slate-600 font-medium">
+                                            {at.name} {at.timezone === hostTz && <span className="text-[9px] text-slate-400 font-normal">(Host)</span>}
+                                          </span>
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="font-mono text-slate-800 font-bold">{at.localTimeStr.split(" - ")[1]}</span>
+                                            <span className={`w-2 h-2 rounded-full ${at.status === "core"
+                                              ? "bg-emerald-500"
+                                              : (at.status === "shoulder" || at.status === "off")
+                                                ? "bg-amber-500"
+                                                : "bg-red-500"
+                                              }`} title={at.statusLabel}></span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Visual 24h Grid Representation */}
+                                <div className="flex flex-col justify-center">
+                                  <div className="text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1.5">Time overlap map</div>
+                                  <div className="space-y-1">
+                                    {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => (
+                                      <div key={at.attendeeId} className="flex items-center gap-2">
+                                        <span className="text-[10px] font-bold text-slate-500 w-16 truncate text-left">{at.name}</span>
+                                        <div className="flex-1 flex gap-0.5 bg-slate-100 rounded-sm p-0.5">
+                                          {/* Represent timeline blocks: morning, work, evening, sleep */}
+                                          <div className={`h-2 flex-1 rounded-xs ${at.status === "core"
+                                            ? "bg-emerald-500"
+                                            : (at.status === "shoulder" || at.status === "off")
+                                              ? "bg-amber-500"
+                                              : "bg-red-500"
+                                            }`}></div>
+                                        </div>
+                                        <span className="text-[9px] font-mono text-slate-400 w-14 text-right">
+                                          {at.localHour}:00 {at.localHour >= 12 ? "PM" : "AM"}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="flex justify-between text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-2 border-t border-slate-100 pt-1">
+                                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Core</span>
+                                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Shoulder</span>
+                                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-500"></span> Sleep</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Trigger Button: Generate Email Draft with Selected Slot */}
+                              <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSelectSlot(slot);
+                                  }}
+                                  disabled={isAgentAutopilotRunning || scribeStatus === "running"}
+                                  className={`w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium px-4 py-2 rounded-lg text-xs transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5 ${isSelected ? "opacity-100" : "opacity-90 group-hover:opacity-100"
+                                    }`}
+                                >
+                                  <span>✉️ Generate Email Draft with Selected Slot</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )
+                )
+              }
+
+              {/* TAB 3: CALENDAR INVITES (.ICS) */}
+              {
+                activeTab === "calendar" && (
+                  (!proposedSlots || proposedSlots.length === 0) ? (
+                    <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
+                      <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
+                      <h4 className="text-sm font-bold text-slate-800">No Calendar Invites Generated Yet</h4>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                        Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
+                      </p>
+                    </div>
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4"
+                    >
+                      <div className="border-b border-slate-100 pb-3">
+                        <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                          <CalendarCheck className="w-3.5 h-3.5 text-indigo-600" />
+                          Download .ics Calendar Invites
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Click download to instantly generate standard `.ics` files. Drag them into Google Calendar, Outlook, or Apple Calendar easily!
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {proposedSlots.map((slot, index) => {
+                          const dateStr = slot.utcDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                          const timeStr = slot.utcDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+                          return (
+                            <div
+                              key={index}
+                              className="bg-white border border-slate-200 rounded-lg p-3.5 shadow-sm hover:border-slate-350 transition-all flex flex-col justify-between"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Option #{index + 1}</span>
+                                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded ${slot.overallRating === "Perfect" ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"
+                                    }`}>
+                                    {slot.overallRating}
+                                  </span>
+                                </div>
+                                <div className="text-xs font-bold text-slate-800">{dateStr}</div>
+                                <div className="text-[11px] text-indigo-600 font-mono font-bold mt-1">{timeStr} UTC</div>
+                                <div className="text-[10px] text-slate-400 mt-2 border-t border-slate-100 pt-2 space-y-1">
+                                  <div className="font-bold text-slate-500 uppercase tracking-tight text-[8px]">Attendee Times:</div>
+                                  {getDeduplicatedRoster(slot.attendeeLocalTimes, currentHostName, currentHostEmail).map((at) => (
+                                    <div key={at.attendeeId} className="flex justify-between">
+                                      <span className="truncate max-w-[75px] font-medium text-slate-600">{at.name}</span>
+                                      <span className="font-mono text-slate-700 font-bold">{at.localTimeStr.split(" - ")[1]}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleDownloadIcs(slot, `meeting-follow-up-option-${index + 1}.ics`)}
+                                className="w-full text-center mt-3.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold py-1.5 rounded flex items-center justify-center gap-1 transition-colors border border-indigo-100 cursor-pointer"
+                              >
+                                <Download className="w-3 h-3" />
+                                Download .ics File
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )
+                )
+              }
+
+              {/* TAB 4: EMAIL RECAP EMAIL DRAFT */}
+              {
+                activeTab === "email" && (
+                  (!hasProcessed || !recapData || !editedEmail) ? (
+                    <div className="text-center py-12 bg-slate-50/50 rounded-xl border border-slate-100 p-6 space-y-3">
+                      <HelpCircle className="w-8 h-8 text-indigo-400 mx-auto animate-bounce" />
+                      <h4 className="text-sm font-bold text-slate-800">No Email Draft Generated Yet</h4>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                        Click <span className="font-bold text-indigo-600">EXTRACT INTELLIGENCE</span> or trigger <span className="font-bold text-indigo-600">AI Autopilot</span> to process this transcript.
+                      </p>
+                    </div>
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4"
+                    >
+                      {/* Control bar */}
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                        <div>
+                          <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                            <Mail className="w-3.5 h-3.5 text-indigo-600" />
+                            Email Recap Draft
+                          </h3>
+                        </div>
+
+                        <div className="flex items-center bg-slate-100 rounded p-0.5 border border-slate-200">
+                          <button
+                            onClick={() => setEmailMode("preview")}
+                            className={`px-3.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded transition-all cursor-pointer flex items-center gap-1 ${emailMode === "preview" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                              }`}
+                          >
+                            <span>👁️ Preview</span>
+                          </button>
+                          <button
+                            onClick={() => setEmailMode("edit")}
+                            className={`px-3.5 py-1 text-[10px] font-bold uppercase tracking-wide rounded transition-all cursor-pointer flex items-center gap-1 ${emailMode === "edit" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                              }`}
+                          >
+                            <span>✏️ Edit Draft</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Email Connection Required Alert Banner */}
+                      {gmailConnectionWarning && (
+                        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-[11px] text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs text-left animate-fade-in">
+                          <div className="flex items-start gap-2.5 flex-1">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <span className="font-extrabold text-amber-950 block">No Outbox Connected</span>
+                              <span className="text-amber-850 leading-normal block">{gmailConnectionWarning}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto">
+                            <button
+                              type="button"
+                              onClick={handleCopyPlainText}
+                              className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 justify-center flex-1 sm:flex-initial"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy Draft Content</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const card = document.getElementById("email-account-connect-card") || document.getElementById("google-account-connect-card");
+                                if (card) {
+                                  card.scrollIntoView({ behavior: "smooth", block: "center" });
+                                  card.classList.add("ring-2", "ring-indigo-500");
+                                  setTimeout(() => {
+                                    card.classList.remove("ring-2", "ring-indigo-500");
+                                  }, 2500);
+                                }
+                              }}
+                              className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1 justify-center flex-1 sm:flex-initial"
+                            >
+                              <span>Connect Account</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Server Connection Error Alert Banner with Fallback Copy Button */}
+                      {serverConnectionError && (
+                        <div className="bg-rose-50 border border-rose-300 rounded-xl p-3.5 text-[11px] text-rose-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs text-left animate-fade-in">
+                          <div className="flex items-start gap-2.5 flex-1">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <span className="font-extrabold text-rose-950 block">Server Connection Error</span>
+                              <span className="text-rose-850 leading-normal block">{serverConnectionError}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCopyPlainText}
+                            className="text-[10px] bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg shrink-0 shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 self-stretch sm:self-auto justify-center"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy Email to Clipboard</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Universal Email & Google Connection Manager Component */}
+                      <EmailConnectionManager
+                        isAuthenticated={isAuthenticated}
+                        isGuestMode={isGuestMode}
+                        user={{ name: currentHostName, email: currentUserEmail }}
+                        currentUserEmail={currentUserEmail}
+                        isEmailConnected={isEmailConnected}
+                        isGoogleConnected={isGoogleConnected}
+                        driveUser={driveUser}
+                        emailConnectionType={emailConnectionType}
+                        setEmailConnectionType={setEmailConnectionType}
+                        smtpConfig={smtpConfig}
+                        setSmtpConfig={setSmtpConfig as any}
+                        smtpConfigSaved={smtpConfigSaved}
+                        setSmtpConfigSaved={setSmtpConfigSaved}
+                        smtpSaveSuccessMessage={smtpSaveSuccessMessage}
+                        setSmtpSaveSuccessMessage={setSmtpSaveSuccessMessage}
+                        googleSignIn={googleSignIn}
+                        googleSignOut={googleSignOut}
+                        setDriveUser={setDriveUser}
+                        setDriveAccessToken={setDriveAccessToken}
+                        setDriveFiles={setDriveFiles}
+                        setSmtpStatus={setSmtpStatus}
+                        setSmtpLogs={setSmtpLogs}
+                        setGmailConnectionWarning={setGmailConnectionWarning}
+                        setPreLoginWarning={setPreLoginWarning}
+                        setError={setError}
+                        setAgentLogs={setAgentLogs}
+                        onOpenPrivacy={() => setActiveLegalModal("privacy")}
+                        onOpenTerms={() => setActiveLegalModal("terms")}
+                        onOpenLoginModal={() => {
+                          setSetupName("");
+                          setSetupEmail("");
+                          setSetupPassword("");
+                          setAuthModalMode("login");
+                          setSetupError(null);
+                          setIsSetupModalOpen(true);
+                        }}
+                      />
+
+                      {/* Subject Line Input Block */}
+                      <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-2 text-left">
+                        <label className="text-[10px] uppercase font-bold text-slate-550 block flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5 text-indigo-600" />
+                          <span className="text-slate-600 font-bold">Subject Line</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={emailSubject}
+                          onChange={(e) => {
+                            setEmailSubject(e.target.value);
+                            setHasUserEditedSubject(true);
+                          }}
+                          placeholder="Enter email subject line..."
+                          className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 font-semibold text-slate-800 shadow-2xs"
+                        />
+                      </div>
+
+                      {/* Recipients Manager Block */}
+                      <div id="email-recipients-box" className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 text-left transition-all">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] uppercase font-bold text-slate-550 block flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-indigo-600" />
+                            <span className="text-slate-600 font-bold">Email Recipients (To:)</span>
+                          </label>
+                          <span className="text-[9px] font-mono text-slate-450 font-bold">
+                            {recipients.length} Recipient{recipients.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+
+                        {/* Recipient Validation Alert Banner */}
+                        {!currentRecipientsValidation.isValid && currentRecipientsValidation.reason && (
+                          <div className="bg-rose-50 border border-rose-300 rounded-lg p-2.5 text-[11px] text-rose-950 flex items-center gap-2 shadow-2xs animate-fade-in">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span className="font-extrabold text-rose-900 leading-snug">
+                              Invalid recipient address detected. Please update before sending.
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Recipient Badges */}
+                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-white border border-slate-150 rounded-lg min-h-[38px]">
+                          {recipients.length === 0 ? (
+                            <span className="text-[10px] text-slate-400 italic p-1">No recipients specified. Enter an email below to add.</span>
+                          ) : (
+                            recipients.map((email, i) => {
+                              const singleVal = validateRecipientEmail(email);
+                              const isErr = !singleVal.isValid;
+                              return (
+                                <span
+                                  key={i}
+                                  className={`inline-flex items-center gap-1 text-[10px] rounded-full px-2.5 py-0.5 font-semibold transition-all ${isErr
+                                    ? "bg-rose-100 text-rose-900 border border-rose-300 ring-1 ring-rose-300/40"
+                                    : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                    }`}
+                                  title={isErr ? singleVal.message : undefined}
+                                >
+                                  {isErr && <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />}
+                                  <span>{email}</span>
+                                  {isErr && (
+                                    <span className="text-[8.5px] uppercase tracking-wider font-extrabold text-rose-700 font-mono">
+                                      (Invalid)
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setRecipients(prev => prev.filter((_, idx) => idx !== i))}
+                                    className="text-slate-400 hover:text-slate-700 font-bold text-[10px] pl-0.5 cursor-pointer ml-0.5"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {/* Add recipient form */}
+                        <div className="flex gap-2">
+                          <input
+                            type="email"
+                            placeholder="Add recipient email address..."
+                            value={newRecipientInput}
+                            onChange={(e) => setNewRecipientInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (newRecipientInput.trim() && !recipients.includes(newRecipientInput.trim())) {
+                                  setRecipients(prev => [...prev, newRecipientInput.trim()]);
+                                  setNewRecipientInput("");
+                                }
+                              }
+                            }}
+                            className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 font-medium"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (newRecipientInput.trim() && !recipients.includes(newRecipientInput.trim())) {
+                                setRecipients(prev => [...prev, newRecipientInput.trim()]);
+                                setNewRecipientInput("");
+                              }
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Main Workspace Render */}
+                      {emailMode === "edit" ? (
+                        <div className="space-y-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span>You are editing the Markdown draft directly.</span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEmailMode("preview")}
+                                className="text-[10px] bg-white hover:bg-slate-50 border border-slate-200 font-bold px-2.5 py-1 rounded-lg text-slate-700 transition-colors flex items-center gap-1 shadow-3xs cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-600" />
+                                Preview Formatted
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleResetDraft}
+                                className="text-[10px] bg-white hover:bg-slate-50 border border-slate-200 font-bold px-2.5 py-1 rounded-lg text-indigo-600 transition-colors flex items-center gap-1 shadow-3xs cursor-pointer"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                Reset Draft
+                              </button>
+                            </div>
+                          </div>
+                          <textarea
+                            value={editedEmail}
+                            onChange={(e) => {
+                              setEditedEmail(e.target.value);
+                              setHasUserEdited(true);
+                            }}
+                            rows={15}
+                            className="w-full p-4 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 resize-y bg-white shadow-inner"
+                            placeholder="Type or edit meeting recap email body here..."
+                          />
+                        </div>
+                      ) : (
+                        <div className="relative group">
+                          <div className="prose prose-slate max-w-none text-xs border border-slate-200 rounded-xl p-5 bg-white max-h-[440px] overflow-y-auto leading-relaxed font-serif text-slate-800 shadow-2xs">
+                            <Markdown>{editedEmail}</Markdown>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setEmailMode("edit")}
+                            className="absolute top-3 right-3 opacity-90 group-hover:opacity-100 transition-opacity bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 shadow-md flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Edit Draft Content</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Sticky Footer Action Bar */}
+                      <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 mt-2">
+                        {isMailtoTooLong && (
+                          <div className="flex flex-row items-center justify-between gap-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 font-bold shadow-2xs w-full">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                              <span className="truncate">
+                                ⚠️ Draft exceeds 2,000 chars (Too long for desktop mailto link).
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleAutoShortenDraft}
+                              className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shadow-2xs text-[10px] uppercase tracking-wider flex items-center gap-1 shrink-0"
+                            >
+                              ⚡ Auto-Shorten Draft
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                          <div className="text-[10px] text-slate-450 flex items-center gap-1.5 font-mono">
+                            <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span>
+                              Selected follow-up Option <strong>#{selectedSlotIndex + 1}</strong> is pre-populated.
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                            <button
+                              onClick={handleCopyMarkdown}
+                              className="flex-1 sm:flex-initial bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                            >
+                              {copiedMarkdown ? (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span className="text-emerald-700">Copied Markdown!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copy Raw Markdown</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              id="copy-draft-content-btn"
+                              onClick={handleCopyPlainText}
+                              className="flex-1 sm:flex-initial bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                            >
+                              {copiedPlainText ? (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                  <span className="text-emerald-700">Copied Draft Content!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>Copy Draft Content</span>
+                                </>
+                              )}
+                            </button>
+
+                            {isMailtoTooLong ? (
+                              <button
+                                id="send-draft-email-client-btn"
+                                disabled
+                                className="flex-1 sm:flex-initial bg-slate-100 border border-slate-200 text-slate-400 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-not-allowed opacity-60"
+                                title="Mailto link disabled because draft exceeds 2,000 char desktop limit. Use 'Send Directly from App' or 'Copy Draft Content'."
+                              >
+                                <Mail className="w-3.5 h-3.5 text-slate-350" />
+                                <span>Open in Email Client</span>
+                              </button>
+                            ) : (
+                              <a
+                                id="send-draft-email-client-btn"
+                                href={mailtoLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={handleOpenEmailClient}
+                                className="flex-1 sm:flex-initial bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                              >
+                                <Mail className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Open in Email Client</span>
+                              </a>
+                            )}
+
+                            <button
+                              id="send-draft-email-direct-btn"
+                              onClick={handleSendDirectly}
+                              disabled={smtpStatus === "sending" || recipients.length === 0}
+                              title={!isEmailConnected ? "No Outbox Connected. Connect an account above or copy draft content." : ""}
+                              className={`flex-1 sm:flex-initial text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-indigo-100 ${smtpStatus === "sending" ? "bg-indigo-600 opacity-60 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"
+                                }`}
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              <span>{smtpStatus === "sending" ? "Sending..." : "Send Directly from App"}</span>
+                            </button>
+
+                            <button
+                              id="finish-and-clear-session-btn"
+                              onClick={handleFinishAndClear}
+                              className="flex-1 sm:flex-initial bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 px-3.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                              title="Wipe workspace session memory and return to main workflow view for a new meeting"
+                            >
+                              <CheckCheck className="w-3.5 h-3.5 text-rose-600" />
+                              <span>Finish & Clear Session</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Email Connection Required Alert Banner */}
+                      {(!isGoogleConnected && !isSmtpConnected) && (
+                        <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl p-3.5 text-[11px] text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs text-left animate-fade-in">
+                          <div className="flex items-start gap-2.5 flex-1">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <span className="font-extrabold text-amber-950 block text-[11.5px]">No Outbox Connected</span>
+                              <span className="text-amber-850 leading-normal block">
+                                Please connect an email account above to dispatch directly from the app, or use the 'Copy Draft Content' button to paste this email into your preferred email provider.
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto">
+                            <button
+                              type="button"
+                              onClick={handleCopyPlainText}
+                              className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 justify-center flex-1 sm:flex-initial"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy Draft Content</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const card = document.getElementById("email-account-connect-card") || document.getElementById("google-account-connect-card");
+                                if (card) {
+                                  card.scrollIntoView({ behavior: "smooth", block: "center" });
+                                  card.classList.add("ring-2", "ring-indigo-500");
+                                  setTimeout(() => {
+                                    card.classList.remove("ring-2", "ring-indigo-500");
+                                  }, 2500);
+                                }
+                              }}
+                              className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1 justify-center flex-1 sm:flex-initial"
+                            >
+                              <span>Connect Account</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SMTP Transmission Logs & Inline Status */}
+                      {(smtpStatus === "sending" || smtpStatus === "sent" || smtpStatus === "error") && (
+                        <div className="bg-slate-900 border border-slate-800 text-slate-100 p-4 rounded-xl space-y-2.5 text-left font-mono text-[10px] mt-4 shadow-inner">
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                            <span className="font-bold flex items-center gap-1.5 text-indigo-400">
+                              <Cpu className={`w-3.5 h-3.5 ${smtpStatus === "sending" ? "animate-spin" : ""}`} />
+                              <span>SMTP Live Pipeline</span>
+                            </span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wide ${smtpStatus === "sending" ? "bg-amber-500/15 text-amber-400" :
+                              smtpStatus === "error" ? "bg-rose-500/20 text-rose-400 font-extrabold border border-rose-500/30" :
+                                "bg-emerald-500/15 text-emerald-400"
+                              }`}>
+                              {smtpStatus === "sending" ? "TRANSMITTING..." :
+                                smtpStatus === "error" ? "TRANSMISSION FAILED" :
+                                  "SUCCESSFULLY DELIVERED"}
+                            </span>
+                          </div>
+                          <div className="max-h-36 overflow-y-auto space-y-1">
+                            {smtpLogs.map((log, index) => (
+                              <div key={index} className={`leading-relaxed whitespace-pre-wrap ${log.includes('FAILED') || log.includes('❌') ? 'text-rose-400 font-semibold' : ''}`}>
+                                {log}
+                              </div>
+                            ))}
+                          </div>
+                          {smtpStatus === "error" && (
+                            <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                              <span className="text-[9.5px] text-slate-400">Dispatch error. Use fallback option:</span>
+                              <button
+                                type="button"
+                                onClick={handleCopyPlainText}
+                                className="bg-rose-600 hover:bg-rose-700 text-white font-sans font-bold px-2.5 py-1 rounded text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow-xs shrink-0"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>Copy Email to Clipboard</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </motion.div>
+                  )
+                )
+              }
+
+              {/* TAB 5: RECURRING MEETING THREADS */}
+              {activeTab === "threads" && (
+                !isUserLoggedIn ? (
+                  <div className="text-center py-16 bg-slate-50 border border-slate-200 rounded-xl p-8 max-w-md mx-auto space-y-4 my-8">
+                    <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-full flex items-center justify-center mx-auto text-indigo-600">
+                      <Lock className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-800">Recurring Threads Hub Locked</h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        A Primary Account is required to create, view, and organize recurring meeting threads and history.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsSetupModalOpen(true)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-xs transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                    >
+                      Sign In to Access Recurring Threads
+                    </button>
+                  </div>
+                ) : (
+                  <motion.div
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-5"
+                  >
+                    <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                          <History className="w-4 h-4 text-indigo-600" />
+                          Recurring Meeting Threads Hub
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Consolidate and search past summaries, rolling action items, and schedules for recurring series.
                         </p>
                       </div>
                     </div>
-                    <span className="text-[9px] text-slate-400 shrink-0 font-mono font-medium">
-                      {new Date(file.modifiedTime).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </button>
-                ));
-              })()}
-            </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setIsDriveModalOpen(false)}
-            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer shadow-3xs"
-          >
-            Close
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  )
-}
-        </AnimatePresence >
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                      {/* Threads List Sidebar */}
+                      <div className="lg:col-span-4 bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block">
+                            New Recurring Thread
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              placeholder="Weekly Sync, Standup..."
+                              value={createThreadNameInput}
+                              onChange={(e) => setCreateThreadNameInput(e.target.value)}
+                              className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none"
+                            />
+                            <button
+                              onClick={() => handleCreateThreadInHub(createThreadNameInput)}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-center transition-colors shadow-xs"
+                              title="Create Thread"
+                            >
+                              <FolderPlus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
 
-  {/* First-Time Setup & Workspace Identity Setup Modal */ }
-  <AnimatePresence>
-{
-  isSetupModalOpen && (
-    <div
-      onClick={() => setIsAuthModalOpen(false)}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs cursor-pointer"
-    >
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ duration: 0.2 }}
-        className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-800 relative overflow-y-auto max-h-[90vh] cursor-default"
-      >
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-lg">
-              {authModalMode === "login" ? "🔑" : authModalMode === "register" ? "👤" : "⚙️"}
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                {authModalMode === "login"
-                  ? "Workspace Sign In"
-                  : authModalMode === "register"
-                    ? "Create Account & Password"
-                    : "Edit Workspace Profile"}
-              </h2>
-              <p className="text-xs text-slate-500">
-                {authModalMode === "login"
-                  ? "Log in with email & password or Google"
-                  : authModalMode === "register"
-                    ? "Set up your credentials for secure thread access"
-                    : "Update profile name, email, or password"}
-              </p>
-            </div>
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold uppercase tracking-widest text-slate-500 block">
+                            Active Threads ({visibleThreads.length})
+                          </label>
+
+                          {visibleThreads.length === 0 ? (
+                            <div className="text-center py-6 text-slate-400 text-xs font-mono">
+                              No authorized threads visible. Use the input above to create one.
+                            </div>
+                          ) : (
+                            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                              {visibleThreads.map((t) => {
+                                const isActive = t.id === activeThreadId;
+                                return (
+                                  <div
+                                    key={t.id}
+                                    onClick={() => setActiveThreadId(t.id)}
+                                    className={`p-3 rounded-lg border text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${isActive
+                                      ? "bg-white border-indigo-500 shadow-xs ring-1 ring-indigo-50"
+                                      : "bg-white/60 border-slate-200 hover:border-slate-300"
+                                      }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-bold text-slate-800 truncate">{t.title}</div>
+                                      <div className="text-[9px] text-slate-450 font-mono mt-0.5 flex items-center gap-1.5">
+                                        <span>{t.entries.length} session{t.entries.length !== 1 ? "s" : ""}</span>
+                                        <span>•</span>
+                                        <span>Created {t.createdAt}</span>
+                                      </div>
+                                    </div>
+                                    {!t.ownerEmail || t.ownerEmail === currentUserEmail ? (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteThread(t.id);
+                                        }}
+                                        className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-all cursor-pointer shrink-0"
+                                        title="Delete Thread"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    ) : (
+                                      <span className="text-slate-300 p-1.5 shrink-0" title="Only the owner can delete this thread">
+                                        <Lock className="w-3.5 h-3.5" />
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Thread Detail Workspace */}
+                      <div className="lg:col-span-8 space-y-4">
+                        {(() => {
+                          const activeThread = visibleThreads.find(t => t.id === activeThreadId);
+                          if (!activeThread) {
+                            return (
+                              <div className="text-center py-20 bg-slate-50/35 rounded-xl border border-slate-150 flex flex-col items-center justify-center">
+                                <History className="w-10 h-10 text-slate-300 mb-2.5 animate-pulse" />
+                                <p className="text-xs text-slate-500 font-medium">Select or create a recurring meeting thread to view details.</p>
+                              </div>
+                            );
+                          }
+
+                          // Calculate aggregate rolling tasks
+                          const allTasks = activeThread.entries.flatMap(e =>
+                            e.actionItems.map((item, idx) => ({
+                              ...item,
+                              entryId: e.id,
+                              entryTitle: e.meetingTitle || e.recapTitle,
+                              entryDate: e.dateStr,
+                              originalIndex: idx
+                            }))
+                          );
+                          const completedCount = allTasks.filter(t => t.completed).length;
+                          const totalCount = allTasks.length;
+                          const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+                          return (
+                            <div className="space-y-4">
+                              {/* Thread Header */}
+                              <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-[8px] uppercase tracking-widest font-bold text-indigo-400 font-mono">Recurring Meeting Thread Workspace</div>
+                                  <h4 className="text-xs font-bold mt-0.5">{activeThread.title}</h4>
+                                  <div className="text-[10px] text-slate-300 mt-1 flex flex-wrap items-center gap-2">
+                                    <span>{activeThread.entries.length} logged sessions</span>
+                                    <span>•</span>
+                                    <span>{completedCount}/{totalCount} tasks completed ({completionRate}%)</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                                  <div className="flex items-center bg-slate-800 rounded p-0.5 border border-slate-700 w-full sm:w-auto justify-center">
+                                    <button
+                                      onClick={() => {
+                                        setThreadSubTab("timeline");
+                                      }}
+                                      className={`flex-1 sm:flex-initial px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all cursor-pointer ${threadSubTab === "timeline" ? "bg-white text-slate-900 shadow-xs" : "text-slate-400 hover:text-white"
+                                        }`}
+                                    >
+                                      Session Timeline
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setThreadSubTab("tasks");
+                                      }}
+                                      className={`flex-1 sm:flex-initial px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all cursor-pointer ${threadSubTab === "tasks" ? "bg-white text-slate-900 shadow-xs" : "text-slate-400 hover:text-white"
+                                        }`}
+                                    >
+                                      Rolling Tasks
+                                    </button>
+                                  </div>
+
+                                  {activeThread.ownerEmail === currentUserEmail && (
+                                    <button
+                                      onClick={() => handleDeleteThread(activeThread.id)}
+                                      className="text-red-400 hover:text-white hover:bg-red-600/90 border border-red-500/30 px-3 py-1.5 rounded-md transition-all cursor-pointer text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 w-full sm:w-auto"
+                                      title="Delete Entire Recurring Thread"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      Delete Thread
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Thread Access & Member Management */}
+                              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-150/80 pb-2">
+                                  <div className="flex items-center gap-2">
+                                    <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                                    <div>
+                                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-700">Thread Access Control</h4>
+                                      <p className="text-[9px] text-slate-500">Only authorized members can view or manage this recurring thread.</p>
+                                    </div>
+                                  </div>
+                                  <div className="text-[9px] font-bold font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-md shrink-0">
+                                    {activeThread.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Read/Write Access"}
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  {/* Members List */}
+                                  <div className="space-y-2">
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Current Members</span>
+                                    <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                                      {/* Owner */}
+                                      <div className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <div className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-[9px] shrink-0">
+                                            {userProfiles.find(p => p.email === activeThread.ownerEmail)?.avatar || "👤"}
+                                          </div>
+                                          <div className="min-w-0">
+                                            <p className="font-bold text-slate-700 truncate">
+                                              {userProfiles.find(p => p.email === activeThread.ownerEmail)?.name || activeThread.ownerEmail}
+                                            </p>
+                                            <p className="text-[9px] text-slate-400 truncate">{activeThread.ownerEmail}</p>
+                                          </div>
+                                        </div>
+                                        <span className="text-[8px] font-bold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-mono shrink-0">Owner</span>
+                                      </div>
+
+                                      {/* Allowed members */}
+                                      {(!activeThread.allowedEmails || activeThread.allowedEmails.length === 0) ? (
+                                        <div className="text-[10px] text-slate-400 italic py-1 pl-1">No other members added to this thread.</div>
+                                      ) : (
+                                        activeThread.allowedEmails.map((email) => {
+                                          const profile = userProfiles.find(p => p.email === email);
+                                          return (
+                                            <div key={email} className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                <div className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center justify-center font-bold text-[9px] shrink-0">
+                                                  {profile?.avatar || "👤"}
+                                                </div>
+                                                <div className="min-w-0">
+                                                  <p className="font-bold text-slate-700 truncate">{profile?.name || email}</p>
+                                                  <p className="text-[9px] text-slate-450 truncate">{email}</p>
+                                                </div>
+                                              </div>
+                                              {activeThread.ownerEmail === currentUserEmail ? (
+                                                <button
+                                                  onClick={() => handleRemoveMemberFromThread(activeThread.id, email)}
+                                                  className="text-red-500 hover:bg-red-50 hover:text-red-700 px-2 py-1 rounded-md transition-colors font-bold text-[10px] cursor-pointer"
+                                                  title="Remove Access"
+                                                >
+                                                  Remove
+                                                </button>
+                                              ) : (
+                                                <span className="text-[8px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded font-mono shrink-0">Member</span>
+                                              )}
+                                            </div>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Add Member Form (Only visible to owner) */}
+                                  <div className="space-y-2">
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Grant Thread Access</span>
+                                    {activeThread.ownerEmail === currentUserEmail ? (
+                                      <div className="space-y-2 bg-white border border-slate-150 p-2.5 rounded-lg shadow-2xs">
+                                        <p className="text-[10px] text-slate-500">Authorize another colleague to view this rolling thread and log meetings.</p>
+                                        <div className="flex gap-2">
+                                          <select
+                                            id="add-member-select"
+                                            className="flex-1 text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md focus:outline-none text-slate-700 font-semibold cursor-pointer"
+                                            defaultValue=""
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              if (val) {
+                                                handleAddMemberToThread(activeThread.id, val);
+                                                e.target.value = ""; // Reset
+                                              }
+                                            }}
+                                          >
+                                            <option value="" disabled>-- Select colleague to add --</option>
+                                            {userProfiles.filter(p => p.email !== activeThread.ownerEmail && !activeThread.allowedEmails?.includes(p.email))
+                                              .map((p, idx) => (
+                                                <option key={`${p.email}-${idx}`} value={p.email}>{p.name} ({p.email})</option>
+                                              ))
+                                            }
+                                          </select>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="bg-slate-100 border border-dashed border-slate-200 p-3 rounded-lg text-center flex flex-col items-center justify-center h-[90px]">
+                                        <Lock className="w-4 h-4 text-slate-400 mb-1" />
+                                        <p className="text-[10px] text-slate-500 font-medium">Only the thread owner can grant access to others.</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Thread SubTab Timeline */}
+                              {threadSubTab === "timeline" && (
+                                <div className="space-y-3">
+                                  {activeThread.entries.length === 0 ? (
+                                    <div className="text-center py-12 bg-slate-50/50 rounded-lg border border-slate-200">
+                                      <History className="w-8 h-8 text-slate-400 mx-auto mb-2 animate-pulse" />
+                                      <p className="text-xs text-slate-500 font-medium">This thread is currently empty.</p>
+                                      <p className="text-[10px] text-slate-450 mt-1">Generate a meeting recap and click "Save Recap to Thread" above to log a session.</p>
+                                    </div>
+                                  ) : (
+                                    <div className="relative border-l border-indigo-100 ml-3 pl-4 space-y-4 pt-1">
+                                      {activeThread.entries.map((entry) => {
+                                        const isExpanded = expandedEntryIds[entry.id] ?? true;
+                                        return (
+                                          <div key={entry.id} className="relative group">
+                                            {/* Timeline Node dot */}
+                                            <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-4 ring-white group-hover:bg-indigo-600 transition-colors"></span>
+
+                                            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-2xs hover:shadow-xs transition-all">
+                                              {/* Header Bar */}
+                                              <div
+                                                onClick={() => setExpandedEntryIds(prev => ({ ...prev, [entry.id]: !isExpanded }))}
+                                                className="bg-slate-50/60 hover:bg-slate-50 px-3.5 py-2.5 flex items-center justify-between gap-3 cursor-pointer select-none"
+                                              >
+                                                <div className="min-w-0">
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="text-[9px] font-bold font-mono text-indigo-600 px-1.5 py-0.2 bg-indigo-50 rounded">
+                                                      {entry.dateStr}
+                                                    </span>
+                                                    {entry.selectedSlot && (
+                                                      <span className="text-[8px] font-bold text-slate-500 bg-slate-100 px-1 rounded flex items-center gap-0.5 truncate max-w-[150px]" title={`Follow-up Scheduled: ${entry.selectedSlot.dateStr} at ${entry.selectedSlot.timeStr}`}>
+                                                        <Clock className="w-2.5 h-2.5 shrink-0" />
+                                                        {entry.selectedSlot.timeStr}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <h5 className="text-[11px] font-bold text-slate-800 mt-1 truncate">{entry.meetingTitle}</h5>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  <button
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleDeleteEntry(activeThread.id, entry.id);
+                                                    }}
+                                                    className="text-slate-300 hover:text-red-500 p-1 rounded transition-colors cursor-pointer"
+                                                    title="Delete Entry"
+                                                  >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                  <ChevronDown className={`w-4 h-4 text-slate-450 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                                                </div>
+                                              </div>
+
+                                              {/* Content Body */}
+                                              {isExpanded && (
+                                                <div className="p-4 space-y-3.5 border-t border-slate-100 text-xs">
+                                                  {/* Summary */}
+                                                  <div className="space-y-1">
+                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Executive Summary</div>
+                                                    <p className="text-slate-600 font-serif leading-relaxed text-[11px]">{entry.summary}</p>
+                                                  </div>
+
+                                                  {/* Topics & Agenda */}
+                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-50">
+                                                    <div>
+                                                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Key Topics Discussed</div>
+                                                      <div className="flex flex-wrap gap-1">
+                                                        {entry.keyTopics.map((topic, i) => (
+                                                          <span key={i} className="text-[9px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-semibold font-sans">
+                                                            {topic}
+                                                          </span>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                    <div>
+                                                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Proposed Agenda</div>
+                                                      <ul className="list-decimal list-inside text-slate-600 text-[10px] space-y-0.5 font-medium">
+                                                        {entry.suggestedAgenda.map((agenda, i) => (
+                                                          <li key={i} className="truncate">{agenda}</li>
+                                                        ))}
+                                                      </ul>
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Entry Specific Tasks */}
+                                                  <div className="pt-2.5 border-t border-slate-50 space-y-1.5">
+                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Action Items</div>
+                                                    {entry.actionItems.length === 0 ? (
+                                                      <div className="text-[10px] text-slate-400 italic">No action items found for this session.</div>
+                                                    ) : (
+                                                      <div className="space-y-1.5">
+                                                        {entry.actionItems.map((item, idx) => (
+                                                          <div
+                                                            key={idx}
+                                                            className={`flex items-start gap-2 p-1.5 rounded transition-colors ${item.completed ? "bg-slate-50/40 opacity-70" : "bg-white"
+                                                              }`}
+                                                          >
+                                                            <input
+                                                              type="checkbox"
+                                                              checked={item.completed ?? false}
+                                                              onChange={() => toggleThreadEntryActionItem(activeThread.id, entry.id, idx)}
+                                                              className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                            />
+                                                            <div className="min-w-0 flex-1 leading-normal">
+                                                              <span className={`text-[11px] font-semibold text-slate-700 ${item.completed ? "line-through text-slate-400" : ""}`}>
+                                                                {item.task}
+                                                              </span>
+                                                              {item.nextSteps && (
+                                                                <div className="mt-1 text-[10px] text-slate-500 bg-slate-50 border border-slate-100/60 rounded-md p-1 leading-relaxed">
+                                                                  <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-500 tracking-wider mr-1">Next Steps:</span>
+                                                                  {item.nextSteps}
+                                                                </div>
+                                                              )}
+                                                              <div className="flex items-center gap-1.5 text-[9px] text-slate-400 mt-0.5 font-mono">
+                                                                <span className="font-bold text-slate-500 bg-slate-100 px-1 rounded">{item.assignee}</span>
+                                                                {item.deadline && (
+                                                                  <span>• Due: {item.deadline}</span>
+                                                                )}
+                                                              </div>
+                                                            </div>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Thread SubTab Rolling Tasks */}
+                              {threadSubTab === "tasks" && (
+                                <div className="space-y-3">
+                                  {/* Completion Meter */}
+                                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                                    <div className="flex justify-between items-center mb-1.5">
+                                      <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Thread Task Progress</span>
+                                      <span className="text-xs font-mono font-bold text-indigo-600">{completedCount} / {totalCount} ({completionRate}%)</span>
+                                    </div>
+                                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                                      <div
+                                        className="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                                        style={{ width: `${completionRate}%` }}
+                                      ></div>
+                                    </div>
+                                  </div>
+
+                                  {/* Action items list */}
+                                  {allTasks.length === 0 ? (
+                                    <div className="text-center py-10 bg-slate-50/50 rounded-lg border border-slate-200 text-xs text-slate-400 italic">
+                                      No rolling tasks found in any of the logged sessions yet.
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {allTasks.map((task, i) => (
+                                        <div
+                                          key={i}
+                                          className={`bg-white border border-slate-200 rounded-lg p-3 flex items-start gap-2.5 shadow-2xs hover:border-slate-300 transition-colors ${task.completed ? "bg-slate-50/40 opacity-70" : ""
+                                            }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={task.completed ?? false}
+                                            onChange={() => toggleThreadEntryActionItem(activeThread.id, task.entryId, task.originalIndex)}
+                                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                                          />
+                                          <div className="min-w-0 flex-1 leading-normal">
+                                            <span className={`text-xs font-bold text-slate-800 ${task.completed ? "line-through text-slate-400" : ""}`}>
+                                              {task.task}
+                                            </span>
+                                            {task.nextSteps && (
+                                              <div className="mt-1 text-[10px] text-slate-500 bg-slate-50 border border-slate-100/60 rounded-md p-1 leading-relaxed">
+                                                <span className="font-mono font-extrabold text-[8px] uppercase text-indigo-500 tracking-wider mr-1">Next Steps:</span>
+                                                {task.nextSteps}
+                                              </div>
+                                            )}
+                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-450 mt-1 font-mono">
+                                              <span className="font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded">{task.assignee}</span>
+                                              {task.deadline && (
+                                                <span className="flex items-center gap-0.5 text-slate-500">📅 Due {task.deadline}</span>
+                                              )}
+                                              <span className="text-slate-300">•</span>
+                                              <span className="text-slate-500 truncate max-w-[180px]" title={task.entryTitle}>
+                                                From: {task.entryDate} - {task.entryTitle}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              )
+              }
+
           </div>
-          <button
-            type="button"
-            onClick={() => setIsAuthModalOpen(false)}
-            className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Close Modal"
-          >
-            ✕
-          </button>
         </div>
+      )
+    }
 
-        {/* Mode Switcher Tabs */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-xl my-3">
-          <button
-            type="button"
-            onClick={() => {
-              setAuthModalMode("login");
-              setSetupError(null);
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "login"
-              ? "bg-white text-indigo-700 shadow-2xs"
-              : "text-slate-500 hover:text-slate-800"
-              }`}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAuthModalMode("register");
-              setSetupError(null);
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "register"
-              ? "bg-white text-indigo-700 shadow-2xs"
-              : "text-slate-500 hover:text-slate-800"
-              }`}
-          >
-            Register Account
-          </button>
-          {authModalMode === "edit" && (
+    </section>
+
+          </div>
+        </main>
+
+    {/* Google Drive Document Browser Modal */}
+    <AnimatePresence>
+  {
+    isDriveModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.15 }}
+          className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]"
+        >
+          {/* Header */}
+          <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-indigo-600 animate-pulse" />
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Google Drive Transcript Import
+              </h3>
+            </div>
             <button
               type="button"
-              className="flex-1 py-1.5 text-xs font-bold rounded-lg bg-white text-indigo-700 shadow-2xs"
+              onClick={() => setIsDriveModalOpen(false)}
+              className="text-slate-450 hover:text-slate-600 font-bold text-lg p-1"
             >
-              Edit Profile
+              ×
             </button>
-          )}
-        </div>
+          </div>
 
-        <div className="py-2 space-y-3.5 text-xs">
-          {setupError && (
-            <div className="bg-red-50 border border-red-200 text-red-700 p-2.5 rounded-lg text-xs font-semibold">
-              ⚠️ {setupError}
-            </div>
-          )}
-
-          {/* Google Sign-In Option */}
-          <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2">
-            <div className="text-[11px] font-bold text-indigo-900 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                Quick Google Login
+          {/* Account / Auth Status info */}
+          {driveUser && (
+            <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[10px]">
+              <span className="text-slate-600 font-mono">
+                Connected: <strong>{driveUser.email}</strong>
               </span>
-              <span className="text-[9px] text-indigo-500 font-mono">No Password Needed</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await googleSignOut();
+                  setDriveUser(null);
+                  setDriveAccessToken(null);
+                  setDriveFiles([]);
+                }}
+                className="text-red-600 hover:underline font-bold"
+              >
+                Disconnect
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleGoogleAuthLogin}
-              disabled={isGoogleSigningIn}
-              className="w-full flex items-center justify-center gap-2.5 py-2 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 shadow-2xs hover:shadow-xs transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isGoogleSigningIn ? (
-                <span className="animate-pulse">Signing in with Google...</span>
-              ) : (
-                <>
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>Sign in with Google Account</span>
-                </>
-              )}
-            </button>
-          </div>
+          )}
 
-          <div className="relative flex py-1 items-center">
-            <div className="flex-grow border-t border-slate-200"></div>
-            <span className="shrink mx-3 text-[10px] font-bold text-slate-400 uppercase font-mono">
-              Or Use Email & Password
-            </span>
-            <div className="flex-grow border-t border-slate-200"></div>
-          </div>
+          {/* Main content body */}
+          <div className="p-4 flex-1 overflow-y-auto space-y-3">
+            {driveError && (
+              <div className="p-2.5 text-[10px] text-red-700 bg-red-50 border border-red-100 rounded-lg flex items-center gap-1.5 font-medium">
+                <span>⚠️ {driveError}</span>
+              </div>
+            )}
 
-          <div className="space-y-3">
-            {(authModalMode === "register" || authModalMode === "edit") && (
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  Full Name <span className="text-red-500">*</span>
-                </label>
+            {/* Search query input */}
+            {!isDriveLoading && !isDriveParsing && driveFiles.length > 0 && (
+              <div className="relative">
                 <input
                   type="text"
-                  placeholder="e.g. Workspace Host"
-                  value={setupName}
-                  onChange={(e) => setSetupName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Search Google Drive docs..."
+                  value={driveSearchQuery}
+                  onChange={(e) => setDriveSearchQuery(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 font-medium"
                 />
               </div>
             )}
 
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">
-                Email Address <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="email"
-                placeholder="e.g. your-email@domain.com"
-                value={setupEmail}
-                onChange={(e) => setSetupEmail(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="font-bold text-slate-700 flex items-center gap-1">
-                  <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
-                  Password{" "}
-                  {authModalMode === "register" && <span className="text-red-500">*</span>}
-                </label>
-                {authModalMode === "edit" && (
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {userPasswords[setupEmail] ? "🔒 Password Set" : "🔓 Optional to update"}
-                  </span>
-                )}
+            {/* Loading states */}
+            {isDriveLoading && (
+              <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-indigo-600 font-medium">
+                <svg className="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span>Loading files from Google Drive...</span>
               </div>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder={
-                    authModalMode === "login"
-                      ? "Enter your password..."
-                      : authModalMode === "register"
-                        ? "Create a secure password (min 4 chars)..."
-                        : "Enter new password (or leave as is)..."
+            )}
+
+            {isDriveParsing && (
+              <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-indigo-600 font-medium">
+                <svg className="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span>Downloading and extracting transcript contents...</span>
+              </div>
+            )}
+
+            {/* Files list */}
+            {!isDriveLoading && !isDriveParsing && (
+              <div className="space-y-1.5">
+                {(() => {
+                  const filtered = driveFiles.filter((f) =>
+                    f.name.toLowerCase().includes(driveSearchQuery.toLowerCase())
+                  );
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg">
+                        <FolderOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                        <p className="text-xs text-slate-500 font-semibold">No supported documents found</p>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Create or upload a Google Doc, .txt, or .docx file in Google Drive!
+                        </p>
+                      </div>
+                    );
                   }
-                  value={setupPassword}
-                  onChange={(e) => setSetupPassword(e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                  title={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+
+                  return filtered.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      onClick={() => handleImportDriveFile(file)}
+                      className="w-full text-left p-2.5 rounded-lg border border-slate-150 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all flex items-center justify-between gap-3 cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <FileText className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-700 truncate group-hover:text-indigo-950">
+                            {file.name}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-mono mt-0.5">
+                            {file.mimeType.includes("document") ? "Google Doc" : file.mimeType.includes("word") ? "Word Document" : "Plain Text"}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] text-slate-400 shrink-0 font-mono font-medium">
+                        {new Date(file.modifiedTime).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </button>
+                  ));
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setIsDriveModalOpen(false)}
+              className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer shadow-3xs"
+            >
+              Close
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+        </AnimatePresence >
+
+    {/* First-Time Setup & Workspace Identity Setup Modal */}
+    <AnimatePresence>
+  {
+    isSetupModalOpen && (
+      <div
+        onClick={() => setIsAuthModalOpen(false)}
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 cursor-pointer"
+      >
+        <motion.div
+          onClick={(e) => e.stopPropagation()}
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          transition={{ duration: 0.2 }}
+          className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-800 relative overflow-y-auto max-h-[90vh] cursor-default"
+        >
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-lg">
+                {authModalMode === "login" ? "🔑" : authModalMode === "register" ? "👤" : "⚙️"}
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  {authModalMode === "login"
+                    ? "Workspace Sign In"
+                    : authModalMode === "register"
+                      ? "Create Account & Password"
+                      : "Edit Workspace Profile"}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {authModalMode === "login"
+                    ? "Log in with email & password or Google"
+                    : authModalMode === "register"
+                      ? "Set up your credentials for secure thread access"
+                      : "Update profile name, email, or password"}
+                </p>
               </div>
             </div>
-
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Primary Timezone</label>
-              <select
-                value={setupTimezone}
-                onChange={(e) => setSetupTimezone(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white cursor-pointer"
-              >
-                {PRESET_TIMEZONES.map((tz) => (
-                  <option key={tz.value} value={tz.value}>
-                    {tz.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="pt-3 border-t border-slate-100 flex flex-col gap-2.5">
-          <div className="flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(false)}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-800 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Close Modal"
             >
-              Cancel
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSaveProfile}
-              className="text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
-            >
-              {authModalMode === "login" ? (
-                <>
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Sign In</span>
-                </>
-              ) : authModalMode === "register" ? (
-                <>
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Create Account & Save Password</span>
-                </>
-              ) : (
-                <>
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span>Save Profile Changes</span>
-                </>
-              )}
+              ✕
             </button>
           </div>
 
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl my-3">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthModalMode("login");
+                setSetupError(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "login"
+                ? "bg-white text-indigo-700 shadow-2xs"
+                : "text-slate-500 hover:text-slate-800"
+                }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthModalMode("register");
+                setSetupError(null);
+              }}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${authModalMode === "register"
+                ? "bg-white text-indigo-700 shadow-2xs"
+                : "text-slate-500 hover:text-slate-800"
+                }`}
+            >
+              Register Account
+            </button>
+            {authModalMode === "edit" && (
+              <button
+                type="button"
+                className="flex-1 py-1.5 text-xs font-bold rounded-lg bg-white text-indigo-700 shadow-2xs"
+              >
+                Edit Profile
+              </button>
+            )}
+          </div>
+
+          <div className="py-2 space-y-3.5 text-xs">
+            {setupError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 p-2.5 rounded-lg text-xs font-semibold">
+                ⚠️ {setupError}
+              </div>
+            )}
+
+            {/* Google Sign-In Option */}
+            <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2">
+              <div className="text-[11px] font-bold text-indigo-900 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                  Quick Google Login
+                </span>
+                <span className="text-[9px] text-indigo-500 font-mono">No Password Needed</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleGoogleAuthLogin}
+                disabled={isGoogleSigningIn}
+                className="w-full flex items-center justify-center gap-2.5 py-2 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 shadow-2xs hover:shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isGoogleSigningIn ? (
+                  <span className="animate-pulse">Signing in with Google...</span>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                    </svg>
+                    <span>Sign in with Google Account</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="relative flex py-1 items-center">
+              <div className="flex-grow border-t border-slate-200"></div>
+              <span className="shrink mx-3 text-[10px] font-bold text-slate-400 uppercase font-mono">
+                Or Use Email & Password
+              </span>
+              <div className="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <div className="space-y-3">
+              {(authModalMode === "register" || authModalMode === "edit") && (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Full Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Workspace Host"
+                    value={setupName}
+                    onChange={(e) => setSetupName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Email Address <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  placeholder="e.g. your-email@domain.com"
+                  value={setupEmail}
+                  onChange={(e) => setSetupEmail(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-700 flex items-center gap-1">
+                    <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+                    Password{" "}
+                    {authModalMode === "register" && <span className="text-red-500">*</span>}
+                  </label>
+                  {authModalMode === "edit" && (
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {userPasswords[setupEmail] ? "🔒 Password Set" : "🔓 Optional to update"}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder={
+                      authModalMode === "login"
+                        ? "Enter your password..."
+                        : authModalMode === "register"
+                          ? "Create a secure password (min 4 chars)..."
+                          : "Enter new password (or leave as is)..."
+                    }
+                    value={setupPassword}
+                    onChange={(e) => setSetupPassword(e.target.value)}
+                    className="w-full pl-3 pr-10 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Primary Timezone</label>
+                <select
+                  value={setupTimezone}
+                  onChange={(e) => setSetupTimezone(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white cursor-pointer"
+                >
+                  {PRESET_TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setIsAuthModalOpen(false)}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-800 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveProfile}
+                className="text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+              >
+                {authModalMode === "login" ? (
+                  <>
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Sign In</span>
+                  </>
+                ) : authModalMode === "register" ? (
+                  <>
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Create Account & Save Password</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Save Profile Changes</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleContinueAsGuest}
+              className="w-full py-2 px-3 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+            >
+              <span>👤 Continue as Guest (Preview Mode)</span>
+            </button>
+
+            <div className="pt-2 border-t border-slate-100 text-center text-[10.5px] text-slate-500 font-sans">
+              By signing in or continuing, you agree to our{" "}
+              <button
+                type="button"
+                onClick={() => setActiveLegalModal("terms")}
+                className="text-indigo-600 hover:underline font-semibold cursor-pointer"
+              >
+                Terms of Service
+              </button>{" "}
+              and{" "}
+              <button
+                type="button"
+                onClick={() => setActiveLegalModal("privacy")}
+                className="text-indigo-600 hover:underline font-semibold cursor-pointer"
+              >
+                Privacy Policy
+              </button>.
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+        </AnimatePresence >
+
+    {/* Global Privacy Policy & Terms of Service Modal */}
+    <AnimatePresence>
+  {
+    activeLegalModal && (
+      <div
+        className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/70"
+        onClick={() => {
+          if (isLegalAccepted) {
+            setActiveLegalModal(null);
+          }
+        }}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          transition={{ duration: 0.15 }}
+          className="w-full max-w-3xl flex items-center justify-center"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {activeLegalModal === "privacy" ? (
+            <PrivacyPolicy onClose={() => setActiveLegalModal(null)} />
+          ) : (
+            <TermsOfService onClose={() => setActiveLegalModal(null)} />
+          )}
+        </motion.div>
+      </div>
+    )
+  }
+        </AnimatePresence >
+
+    {/* Floating Global Feedback Toast */}
+    <AnimatePresence>
+  {
+    saveSuccessMessage && (
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 20, scale: 0.95 }}
+        className="fixed bottom-6 left-6 z-50 bg-emerald-50 text-emerald-900 px-4 py-3 rounded-xl shadow-xl border border-emerald-200 text-xs font-semibold flex items-center gap-2.5 max-w-sm pointer-events-none"
+      >
+        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+        <span className="flex-1">{saveSuccessMessage}</span>
+      </motion.div>
+    )
+  }
+        </AnimatePresence>
+
+    {/* Global Workspace Page Footer */}
+    <footer className="border-t border-slate-200 bg-white py-6 pb-20 sm:pb-16 mt-16 text-center text-[11px] text-slate-500 font-mono">
+      <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-center">
+        <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-slate-500 text-xs font-sans">
+          <span className="font-semibold text-slate-700">© 2026 Cadence Desk</span>
+          <span className="hidden sm:inline text-slate-300">•</span>
+          <span className="text-slate-500 text-[11px] font-mono uppercase tracking-wider">
+            Zero-Cloud Intelligent Meeting Workspace
+          </span>
+        </div>
+        <span className="hidden sm:inline text-slate-300">•</span>
+        <div className="flex items-center justify-center gap-4 text-slate-600 font-sans text-xs font-medium shrink-0">
           <button
             type="button"
-            onClick={handleContinueAsGuest}
-            className="w-full py-2 px-3 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+            onClick={() => setActiveLegalModal("privacy")}
+            className="hover:text-indigo-600 transition-colors cursor-pointer underline underline-offset-2"
           >
-            <span>👤 Continue as Guest (Preview Mode)</span>
+            Privacy Policy
           </button>
-
-          <div className="pt-2 border-t border-slate-100 text-center text-[10.5px] text-slate-500 font-sans">
-            By signing in or continuing, you agree to our{" "}
-            <button
-              type="button"
-              onClick={() => setActiveLegalModal("terms")}
-              className="text-indigo-600 hover:underline font-semibold cursor-pointer"
-            >
-              Terms of Service
-            </button>{" "}
-            and{" "}
-            <button
-              type="button"
-              onClick={() => setActiveLegalModal("privacy")}
-              className="text-indigo-600 hover:underline font-semibold cursor-pointer"
-            >
-              Privacy Policy
-            </button>.
-          </div>
+          <span className="text-slate-300">•</span>
+          <button
+            type="button"
+            onClick={() => setActiveLegalModal("terms")}
+            className="hover:text-indigo-600 transition-colors cursor-pointer underline underline-offset-2"
+          >
+            Terms of Service
+          </button>
         </div>
-      </motion.div>
-    </div>
-  )
-}
-        </AnimatePresence >
+      </div>
+    </footer>
 
-  {/* Global Privacy Policy & Terms of Service Modal */ }
-  <AnimatePresence>
-{
-  activeLegalModal && (
-    <div
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-md"
-      onClick={() => {
-        if (isLegalAccepted) {
-          setActiveLegalModal(null);
-        }
-      }}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ duration: 0.15 }}
-        className="w-full max-w-3xl flex items-center justify-center"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {activeLegalModal === "privacy" ? (
-          <PrivacyPolicy onClose={() => setActiveLegalModal(null)} />
-        ) : (
-          <TermsOfService onClose={() => setActiveLegalModal(null)} />
-        )}
-      </motion.div>
-    </div>
-  )
-}
-        </AnimatePresence >
-
-  {/* Floating Global Feedback Toast */ }
-  <AnimatePresence>
-{
-  saveSuccessMessage && (
-    <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 20, scale: 0.95 }}
-      className="fixed bottom-6 left-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 text-xs font-semibold flex items-center gap-2.5 max-w-sm pointer-events-none"
-    >
-      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-      <span className="flex-1">{saveSuccessMessage}</span>
-    </motion.div>
-  )
-}
-        </AnimatePresence >
-
-  {/* Grounded Assistant Chatbot Widget */ }
-  < SynchronChatbot
-key = {`chatbot-${currentUserEmail || "guest"}-${logoutCount}`}
-meetingContext = {{
-  rawTranscript: transcript,
-    extractedTasks: recapData?.actionItems?.map((item) => ({
-      task: item.task,
-      assignee: item.assignee,
-      deadline: item.deadline,
-      priority: (item as any).priority || "Medium"
-    })),
-      attendees: attendees.map((a) => ({
-        name: a.name,
-        locationOrTimezone: a.timezone
-      })),
+    {/* Grounded Assistant Chatbot Widget */}
+    <SynchronChatbot
+      key={`chatbot-${currentUserEmail || "guest"}-${logoutCount}`}
+      activeTab={activeTab}
+      meetingContext={{
+        rawTranscript: transcript,
+        extractedTasks: recapData?.actionItems?.map((item) => ({
+          task: item.task,
+          assignee: item.assignee,
+          deadline: item.deadline,
+          priority: (item as any).priority || "Medium",
+        })),
+        attendees: attendees.map((a) => ({
+          name: a.name,
+          locationOrTimezone: a.timezone,
+        })),
         proposedSlots: proposedSlots.map((s) => ({
           slot: s.utcDate ? new Date(s.utcDate).toUTCString() : "Slot",
           score: s.score || 0,
-          type: s.badge === "GOLD" || s.overallRating === "Perfect" ? "Gold" : s.badge === "SILVER" || s.overallRating === "Good" ? "Silver" : "Bronze"
-        }))
-}}
-        />
-      </div >
-
-  {/* Blocking Legal Consent Gate */ }
-{
-  !isLegalAccepted && (
-    <LegalConsentModal
-      onConsentGiven={() => setIsLegalAccepted(true)}
+          type: s.badge === "GOLD" || s.overallRating === "Perfect" ? "Gold" : s.badge === "SILVER" || s.overallRating === "Good" ? "Silver" : "Bronze",
+        })),
+      }}
     />
-  )
-}
-    </div >
+
+    {/* Blocking Legal Consent Gate */}
+    {!isLegalAccepted && (
+      <LegalConsentModal
+        onConsentGiven={() => setIsLegalAccepted(true)}
+      />
+    )}
+    </div>
   );
 }

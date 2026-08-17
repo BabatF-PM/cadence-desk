@@ -21,6 +21,7 @@ export interface ChatMessage {
 
 export interface SynchronChatbotProps {
   meetingContext?: ActiveMeetingContext;
+  activeTab?: "recap" | "overlap" | "calendar" | "email" | "threads" | "agents";
 }
 
 const INITIAL_WELCOME: ChatMessage = {
@@ -52,58 +53,138 @@ const ALL_SUGGESTIONS = [
   "Who do I contact for support or inquiries?"
 ];
 
-export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext }) => {
+export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext, activeTab = "agents" }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_WELCOME]);
   const [input, setInput] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Dynamic Suggestion Chips: Always guarantees at least 3-4 suggestions are returned and visible
+  // Dynamic suggestion chips adapt to the current workspace tab and session state.
+  const activeSuggestionLabel = useMemo<string>(() => {
+    const labels: Record<string, string> = {
+      recap: "Recap",
+      overlap: "Overlap",
+      calendar: "Calendar",
+      email: "Email",
+      threads: "Threads",
+      agents: "Agents"
+    };
+
+    return labels[activeTab] || "Agents";
+  }, [activeTab]);
+
   const activeSuggestions = useMemo<string[]>(() => {
     const userQueries = messages
       .filter((m) => m.sender === "user")
       .map((m) => m.text.trim().toLowerCase());
 
     const result: string[] = [];
-
     const hasTasks = Boolean(meetingContext?.extractedTasks && meetingContext.extractedTasks.length > 0);
     const hasAttendees = Boolean(meetingContext?.attendees && meetingContext.attendees.length > 0);
     const hasSlots = Boolean(meetingContext?.proposedSlots && meetingContext.proposedSlots.length > 0);
     const hasTranscript = Boolean(meetingContext?.rawTranscript && meetingContext.rawTranscript.trim().length > 0);
+    const hasAskedAny = userQueries.length > 0;
 
-    if (hasTasks) {
-      result.push("Who has the highest-priority action items?");
-      result.push("Summarize all extracted tasks and deadlines");
-    }
+    const tabSpecificSuggestions: Record<string, string[]> = {
+      recap: [
+        hasTasks ? "Summarize all extracted tasks and deadlines" : "What action items were extracted from this meeting?",
+        hasTasks ? "Who has the highest-priority action items?" : "What are the key decisions from this recap?",
+        "Which follow-up tasks need attention first?",
+        "What should the next meeting agenda be?"
+      ],
+      overlap: [
+        hasSlots ? "Which timezone slot has the best alignment score?" : "How should we optimize attendee overlap?",
+        hasAttendees ? "Which attendees are most misaligned by timezone?" : "What constraints are reducing the overlap score?",
+        "What is the strongest proposal for the next available meeting slot?",
+        "How can we reduce the time-zone spread for this group?"
+      ],
+      threads: [
+        "What recurring themes are emerging across this thread?",
+        "Compare the latest thread entries and summarize the trend.",
+        "Which action items keep reappearing in this thread?",
+        "What should I focus on in the next recurring sync?"
+      ],
+      email: [
+        hasTasks ? "Draft a follow-up email summarizing the open action items." : "Draft a concise meeting follow-up email.",
+        "Write a polished executive recap email from this session.",
+        "What email tone should I use for this audience?",
+        "Create a short summary email with blockers and next steps."
+      ],
+      calendar: [
+        "Which proposed slot looks best for attendees?",
+        "What scheduling constraints should I watch before sending invites?",
+        "How do the current attendee availability patterns compare?",
+        "What meeting window minimizes cross-timezone friction?"
+      ],
+      agents: [
+        "Explain the 4-stage agent pipeline",
+        "How are action items extracted and prioritized?",
+        "What security guarantees does zero-cloud storage offer?",
+        "What are the current workspace issues and resolutions?"
+      ]
+    };
 
-    if (hasAttendees || hasSlots) {
-      result.push("Which timezone slot has the best alignment score?");
-      result.push("List all attendees and their locations");
-    }
+    const tabSuggestions = tabSpecificSuggestions[activeTab] || tabSpecificSuggestions.agents;
 
-    if (hasTranscript && !hasTasks) {
-      result.push("What are the key decisions in the loaded transcript?");
-    }
-
-    // Add unasked questions from the master pool
-    for (const q of ALL_SUGGESTIONS) {
-      if (result.length < 4 && !result.includes(q) && !userQueries.includes(q.toLowerCase())) {
+    for (const q of tabSuggestions) {
+      if (!result.includes(q) && !userQueries.includes(q.toLowerCase()) && result.length < 4) {
         result.push(q);
       }
     }
 
-    // If all suggestions have been asked, cycle through the master list so buttons NEVER disappear
-    if (result.length < 3) {
-      for (const q of ALL_SUGGESTIONS) {
-        if (result.length < 4 && !result.includes(q)) {
-          result.push(q);
-        }
+    if (hasTranscript && !hasTasks && result.length < 4) {
+      const transcriptPrompts = [
+        "What are the key decisions in the loaded transcript?",
+        "What are the most important takeaways from this conversation?"
+      ];
+      for (const q of transcriptPrompts) {
+        if (!result.includes(q) && !userQueries.includes(q.toLowerCase()) && result.length < 4) result.push(q);
       }
     }
 
+    if (hasTasks && result.length < 4) {
+      const taskPrompts = [
+        "Who has the highest-priority action items?",
+        "Summarize all extracted tasks and deadlines"
+      ];
+      for (const q of taskPrompts) {
+        if (!result.includes(q) && !userQueries.includes(q.toLowerCase()) && result.length < 4) result.push(q);
+      }
+    }
+
+    if ((hasSlots || hasAttendees) && result.length < 4) {
+      const overlapPrompts = [
+        "Which timezone slot has the best alignment score?",
+        "List all attendees and their locations"
+      ];
+      for (const q of overlapPrompts) {
+        if (!result.includes(q) && !userQueries.includes(q.toLowerCase()) && result.length < 4) result.push(q);
+      }
+    }
+
+    for (const q of ALL_SUGGESTIONS) {
+      if (result.length >= 4) break;
+      if (!result.includes(q) && !userQueries.includes(q.toLowerCase())) {
+        result.push(q);
+      }
+    }
+
+    if (result.length < 3) {
+      for (const q of ALL_SUGGESTIONS) {
+        if (!result.includes(q)) {
+          result.push(q);
+        }
+        if (result.length >= 4) break;
+      }
+    }
+
+    if (!hasAskedAny && result.length === 0) {
+      return ALL_SUGGESTIONS.slice(0, 4);
+    }
+
     return result.slice(0, 4);
-  }, [meetingContext, messages]);
+  }, [activeTab, meetingContext, messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -272,6 +353,9 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                     Suggested Questions
                   </span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-1.5 py-0.5">
+                    {activeSuggestionLabel}
+                  </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 max-h-[96px] overflow-y-auto">
                   {activeSuggestions.map((q: string, idx: number) => (
@@ -282,6 +366,7 @@ export const SynchronChatbot: React.FC<SynchronChatbotProps> = ({ meetingContext
                       disabled={isLoading}
                       className="text-[11px] text-indigo-700 bg-white hover:bg-indigo-50 active:scale-95 border border-indigo-200 px-2.5 py-1 rounded-full text-left transition shadow-2xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                     >
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-indigo-500 bg-indigo-50 border border-indigo-100 rounded-full px-1 py-0.5">{activeSuggestionLabel}</span>
                       <span className="text-xs">💡</span>
                       <span>{q}</span>
                     </button>
