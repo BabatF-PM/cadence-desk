@@ -40,7 +40,7 @@ export const LegalConsentModal: React.FC<LegalConsentModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+      <div className="fixed inset-0 z-50 bg-slate-900/90 flex items-center justify-center p-4 overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -192,7 +192,7 @@ export const LegalConsentModal: React.FC<LegalConsentModalProps> = ({
       <AnimatePresence>
         {viewingDoc && (
           <div
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md"
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/70"
             onClick={(e) => {
               e.stopPropagation();
               setViewingDoc(null);

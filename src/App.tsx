@@ -53,6 +53,12 @@ import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 import { EmailConnectionManager } from "./components/EmailConnectionManager";
 import { SynchronChatbot } from "./components/SynchronChatbot";
+import {
+  fetchOutlookAttendeeTimezones,
+  fetchGoogleAttendeeTimezones,
+  getAttendeeLocalTime,
+  EnrichedAttendee
+} from './services/calendarTimezoneService';
 import { PrivacyPolicy } from "./components/PrivacyPolicy";
 import { TermsOfService } from "./components/TermsOfService";
 import { LegalConsentModal } from "./components/LegalConsentModal";
@@ -257,6 +263,12 @@ export default function App() {
   });
 
   const [driveUser, setDriveUser] = useState<any>(null);
+
+  // --- Step 1: Calendar Meeting Picker States ---
+  const [calendarEventsList, setCalendarEventsList] = useState<any[]>([]);
+  const [isCalendarPickerOpen, setIsCalendarPickerOpen] = useState<boolean>(false);
+  const [calendarToken, setCalendarToken] = useState<string | null>(null);
+
   const [authModalMode, setAuthModalMode] = useState<"login" | "register" | "edit">("login");
   const [setupPassword, setSetupPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -264,6 +276,109 @@ export default function App() {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [newRecipientInput, setNewRecipientInput] = useState("");
 
+  // --- Automated Calendar Attendee & Timezone Engine (Link-Join & Null-Safe) ---
+  const populateAttendeesFromCalendar = async (
+    rawEvent: any,
+    provider: "google" | "microsoft" = "google",
+    token: string = ""
+  ) => {
+    try {
+      if (!rawEvent) return;
+
+      const rawAttendees: any[] = Array.isArray(rawEvent.attendees) ? rawEvent.attendees : [];
+      
+      // Fallback to organizer/creator if no attendee array exists
+      const attendeeList =
+        rawAttendees.length > 0
+          ? rawAttendees
+          : [rawEvent.organizer || rawEvent.creator || { email: "organizer@workspace.local", displayName: "Organizer" }];
+
+      const defaultEventTz =
+        rawEvent.start?.timeZone ||
+        Intl.DateTimeFormat().resolvedOptions().timeZone ||
+        "UTC";
+
+      const enrichedAttendees = await Promise.all(
+        attendeeList.map(async (att: any, index: number) => {
+          // 1. Safe Email Extraction (Handles undefined / null / link-join guests)
+          const rawEmail = typeof att === "string" ? att : att?.email || att?.emailAddress?.address || "";
+          const validEmail =
+            typeof rawEmail === "string" && rawEmail.trim() !== ""
+              ? rawEmail.trim().toLowerCase()
+              : `guest-${index + 1}@external.attendee`;
+
+          // 2. Safe Display Name Extraction
+          let displayName = "";
+          if (typeof att === "string") {
+            displayName = att.includes("@") ? att.split("@")[0] : att;
+          } else if (typeof att?.displayName === "string" && att.displayName.trim() !== "") {
+            displayName = att.displayName.trim();
+          } else if (typeof att?.name === "string" && att.name.trim() !== "") {
+            displayName = att.name.trim();
+          } else if (validEmail.includes("@") && !validEmail.includes("@external.attendee")) {
+            displayName = validEmail.split("@")[0].replace(/[._-]/g, " ");
+          } else {
+            displayName = `Guest Participant ${index + 1}`;
+          }
+
+          // 3. Role Resolution ("host" | "guest")
+          const isOrganizer = Boolean(
+            att?.organizer === true ||
+            (rawEvent.organizer?.email && rawEvent.organizer.email.toLowerCase() === validEmail) ||
+            index === 0
+          );
+
+          // 4. Safe Timezone Resolution
+          let resolvedTimezone = "UTC";
+          if (typeof att?.timeZone === "string" && att.timeZone.trim() !== "") {
+            resolvedTimezone = att.timeZone.trim();
+          } else if (typeof defaultEventTz === "string" && defaultEventTz.trim() !== "") {
+            resolvedTimezone = defaultEventTz.trim();
+          }
+
+          // 5. Safe Local Time Calculation
+          let formattedLocalTime = "";
+          try {
+            formattedLocalTime = new Intl.DateTimeFormat("en-US", {
+              timeZone: resolvedTimezone,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true
+            }).format(new Date());
+          } catch (formatErr) {
+            console.warn(`Fallback for invalid timezone [${resolvedTimezone}]:`, formatErr);
+            resolvedTimezone = "UTC";
+            formattedLocalTime = new Intl.DateTimeFormat("en-US", {
+              timeZone: "UTC",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true
+            }).format(new Date());
+          }
+
+          return {
+            id: `cal-att-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            name: displayName,
+            email: validEmail,
+            role: (isOrganizer ? "host" : "guest") as "host" | "guest",
+            timezone: resolvedTimezone,
+            formattedLocalTime: formattedLocalTime
+          };
+        })
+      );
+
+      // Ensure at least one Host is assigned
+      const hasHost = enrichedAttendees.some((a) => a.role === "host");
+      if (!hasHost && enrichedAttendees.length > 0) {
+        enrichedAttendees[0].role = "host";
+      }
+
+      setAttendees(enrichedAttendees);
+    } catch (err) {
+      console.error("Error populating attendees from calendar:", err);
+    }
+  };
+  
   // Synchronize recipients list with attendees when attendees list changes or on initialization
   useEffect(() => {
     if (!isExecuted || !attendees || attendees.length === 0) return;
@@ -3234,8 +3349,61 @@ ${followUpStr}
                     <Users className="w-3.5 h-3.5 text-indigo-600" />
                     Attendees & Timezones ({attendees.length})
                   </h2>
-                  <div className="text-[10px] text-slate-400 font-mono">
-                    1 Host Required
+                  
+                  <div className="flex items-center gap-2">
+                    {/* Live Calendar Sync Trigger */}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const token =
+                          (window as any).__GOOGLE_ACCESS_TOKEN__ ||
+                          localStorage.getItem("gcal_access_token") ||
+                          (window as any).gapi?.client?.getToken?.()?.access_token ||
+                          (window as any).googleAccessToken;
+
+                        if (!token) {
+                          alert("Please connect your Google Account first.");
+                          return;
+                        }
+
+                        try {
+                          const response = await fetch(
+                            "https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=15&orderBy=startTime&singleEvents=true&timeMin=" +
+                              new Date().toISOString(),
+                            {
+                              headers: { Authorization: `Bearer ${token}` }
+                            }
+                          );
+
+                          const data = await response.json();
+
+                          if (data.error) {
+                            console.error("Google Calendar API Error:", data.error);
+                            alert(`Google Calendar Error: ${data.error.message || "Please re-sign in to authorize calendar access."}`);
+                            return;
+                          }
+
+                          if (data.items && data.items.length > 0) {
+                            setCalendarEventsList(data.items);
+                            setCalendarToken(token);
+                            setIsCalendarPickerOpen(true); // <--- Opens the selection modal
+                          } else {
+                            alert("No upcoming meetings found on your primary Google Calendar.");
+                          }
+                        } catch (err) {
+                          console.error("Failed to sync calendar:", err);
+                          alert("Network error fetching Google Calendar events.");
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold border border-indigo-200 transition-colors cursor-pointer"
+                      title="Choose a meeting to import attendees"
+                    >
+                      📅 Sync Calendar
+                    </button>
+
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      1 Host Required
+                    </div>
                   </div>
                 </div>
 
@@ -3319,7 +3487,9 @@ ${followUpStr}
                               </span>
                             )}
                             <span>•</span>
-                            <span className="text-indigo-600 font-bold shrink-0">{a.timezone.split("/").pop()?.replace("_", " ")}</span>
+                            <span className="text-indigo-600 font-bold shrink-0">
+                            {a.formattedLocalTime ? `🕒 ${a.formattedLocalTime}` : (a.timezone ? a.timezone.split("/").pop()?.replace("_", " ") : "UTC")}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -6318,6 +6488,92 @@ ${followUpStr}
     )
   }
         </AnimatePresence >
+
+    {/* Google Calendar Meeting Picker Modal */}
+      <AnimatePresence>
+        {isCalendarPickerOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.15 }}
+              className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              {/* Header */}
+              <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">📅</span>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Select Calendar Meeting to Import
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarPickerOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 font-bold text-lg p-1"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Meeting List */}
+              <div className="p-3 overflow-y-auto space-y-2 flex-1">
+                {calendarEventsList.map((event) => {
+                  const startDate = event.start?.dateTime ? new Date(event.start.dateTime) : null;
+                  const attendeeCount = event.attendees ? event.attendees.length : 0;
+
+                  return (
+                    <div
+                      key={event.id}
+                      onClick={async () => {
+                        if (event.summary) setMeetingTitle(event.summary);
+                        if (calendarToken) {
+                          await populateAttendeesFromCalendar(event, "google", calendarToken);
+                        }
+                        setIsCalendarPickerOpen(false);
+                      }}
+                      className="p-3 rounded-lg border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40 cursor-pointer transition-all flex items-center justify-between group"
+                    >
+                      <div className="min-w-0 pr-3">
+                        <div className="text-xs font-bold text-slate-800 truncate group-hover:text-indigo-600">
+                          {event.summary || "Untitled Event"}
+                        </div>
+                        <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5 font-mono">
+                          {startDate && (
+                            <span>
+                              {startDate.toLocaleDateString([], { month: "short", day: "numeric" })} •{" "}
+                              {startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          )}
+                          <span>•</span>
+                          <span className="text-indigo-600 font-medium">
+                            {attendeeCount} attendee{attendeeCount === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                        Import →
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarPickerOpen(false)}
+                  className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     {/* First-Time Setup & Workspace Identity Setup Modal */}
     <AnimatePresence>

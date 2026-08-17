@@ -9,6 +9,7 @@ export interface Attendee {
   email: string;
   timezone: string;
   isHost?: boolean;
+  formattedLocalTime?: string;
 }
 
 export interface ProposedSlot {
