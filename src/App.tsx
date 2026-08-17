@@ -640,8 +640,8 @@ export default function App() {
     setHasProcessed(false);
     setAgentStep("idle");
 
-    // Purge Thread state
-    setThreads(createDefaultThreads("your-email@domain.com"));
+    // Purge Thread state safely
+    setThreads(createDefaultThreads(currentUserEmail || "your-email@domain.com"));
     setActiveThreadId(null);
 
     // 3. Reset user session state
@@ -1120,93 +1120,114 @@ export default function App() {
   const handleResetWorkspaceSession = handleResetWorkspace;
 
   // --- Recurring Meeting Threads State ---
-  const [threads, setThreads] = useState<MeetingThread[]>(() => {
-    const initialUser = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity") || "your-email@domain.com";
-    const defaultList = createDefaultThreads(initialUser === "unassigned" ? "your-email@domain.com" : initialUser);
-
+  const [threads, setThreads] = useState<any[]>(() => {
+    if (typeof localStorage === "undefined") return [];
     const saved = localStorage.getItem("cadence_threads") || localStorage.getItem("m_synchron_threads");
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const hasHorizon = parsed.some((t: any) => t.id === "thread-horizon" || t.title?.toLowerCase().includes("horizon"));
-          if (!hasHorizon) {
-            return [defaultList[0], ...parsed];
-          }
-          return parsed;
-        }
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
         console.error("Failed to parse saved threads:", e);
       }
     }
-    return defaultList;
+    return [];
   });
 
-  // Ensure Project Horizon thread is always present and accessible to active user or guest
+  // Persist threads to localStorage
   useEffect(() => {
-    const norm = (currentUserEmail || "your-email@domain.com").trim().toLowerCase();
-    setThreads(prev => {
-      let updated = [...prev];
-      const hasHorizon = updated.some(t => t.id === "thread-horizon" || t.title.toLowerCase().includes("horizon"));
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("cadence_threads", JSON.stringify(threads));
+    }
+  }, [threads]);
 
-      if (!hasHorizon) {
-        const defaultList = createDefaultThreads(norm);
-        const horizon = defaultList.find(t => t.id === "thread-horizon") || defaultList[0];
-        updated = [horizon, ...updated];
-      }
-
-      let changed = false;
-      updated = updated.map(t => {
-        if (t.id === "thread-horizon" || t.title.toLowerCase().includes("horizon")) {
-          const isOwner = t.ownerEmail?.toLowerCase() === norm;
-          const isAllowed = Array.isArray(t.allowedEmails) && t.allowedEmails.some(e => e.toLowerCase() === norm);
-          if (!isOwner && !isAllowed) {
-            changed = true;
-            return {
-              ...t,
-              allowedEmails: Array.from(new Set([...(t.allowedEmails || []), norm, "your-email@domain.com"]))
-            };
-          }
-        }
-        return t;
-      });
-
-      if (!hasHorizon || changed) {
-        localStorage.setItem("cadence_threads", JSON.stringify(updated));
-        return updated;
-      }
-      return prev;
-    });
-  }, [currentUserEmail]);
-
-  // Filter threads strictly by membership / ownership (No threads visible when logged out)
+// Strict Thread Privacy Filter: Only shows threads the active user owns or is an attendee/member of
   const visibleThreads = useMemo(() => {
-    if (!currentUserEmail) {
+    if (!currentUserEmail || currentUserEmail === "unassigned") {
       return [];
     }
     const norm = currentUserEmail.trim().toLowerCase();
-    return threads.filter(t => {
-      const isOwner = Boolean(t.ownerEmail && t.ownerEmail.toLowerCase() === norm);
-      const isAllowed = Array.isArray(t.allowedEmails) && t.allowedEmails.some(e => e.toLowerCase() === norm);
-      return isOwner || isAllowed;
+
+    return (threads as any[]).filter((t: any) => {
+      // 1. User is the creator / owner
+      const isOwner = Boolean(t?.ownerEmail && String(t.ownerEmail).toLowerCase() === norm);
+
+      // 2. User is in the allowedEmails list
+      const isAllowed =
+        Array.isArray(t?.allowedEmails) &&
+        t.allowedEmails.some((e: any) => typeof e === "string" && e.toLowerCase() === norm);
+
+      // 3. User is an attendee in this meeting thread or any of its sub-entries
+      const isAttendee =
+        (Array.isArray(t?.attendees) &&
+          t.attendees.some((att: any) => {
+            const email = typeof att === "string" ? att : att?.email || att?.emailAddress?.address;
+            return typeof email === "string" && email.toLowerCase() === norm;
+          })) ||
+        (Array.isArray(t?.entries) &&
+          t.entries.some((entry: any) =>
+            Array.isArray(entry?.attendees) &&
+            entry.attendees.some((att: any) => {
+              const email = typeof att === "string" ? att : att?.email || att?.emailAddress?.address;
+              return typeof email === "string" && email.toLowerCase() === norm;
+            })
+          ));
+
+      return isOwner || isAllowed || isAttendee;
     });
   }, [threads, currentUserEmail]);
 
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
-  // Handle activeThread selection security fallback when identity or visibility list changes
+  // Active Thread Security Fallback
   useEffect(() => {
     if (!currentUserEmail || visibleThreads.length === 0) {
       setActiveThreadId(null);
       return;
     }
     if (activeThreadId) {
-      const isVisible = visibleThreads.some(t => t.id === activeThreadId);
+      const isVisible = visibleThreads.some((t: any) => t?.id === activeThreadId);
       if (!isVisible) {
         setActiveThreadId(null);
       }
     }
   }, [currentUserEmail, visibleThreads, activeThreadId]);
+
+  // --- Dedicated Thread Loader ---
+  const handleOpenThread = (thread: any) => {
+    if (!thread) return;
+
+    // 1. Set active thread ID
+    setActiveThreadId(thread.id || null);
+
+    // 2. Extract latest entry from thread entries array if present
+    const latestEntry = Array.isArray(thread.entries) && thread.entries.length > 0
+      ? thread.entries[thread.entries.length - 1]
+      : null;
+
+    // 3. Populate Meeting Title
+    const titleToSet = thread.title || latestEntry?.title;
+    if (titleToSet) {
+      setMeetingTitle(titleToSet);
+    }
+
+    // 4. Populate Attendees
+    const attendeesToSet = (Array.isArray(thread.attendees) && thread.attendees.length > 0)
+      ? thread.attendees
+      : latestEntry?.attendees;
+    if (Array.isArray(attendeesToSet) && attendeesToSet.length > 0) {
+      setAttendees(attendeesToSet);
+    }
+
+    // 5. Populate Tasks / Action Items
+    // Note: Tasks are managed via recapData.actionItems and thread entry integration
+    // const tasksToSet = (Array.isArray(thread.tasks) && thread.tasks.length > 0)
+    //   ? thread.tasks
+    //   : latestEntry?.tasks;
+
+    // 6. Scroll smoothly to the workspace desk
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const [saveTargetThreadId, setSaveTargetThreadId] = useState("");
   const [newThreadTitle, setNewThreadTitle] = useState("");
@@ -1220,7 +1241,7 @@ export default function App() {
 
   const ownedThreads = useMemo(() => {
     if (!currentUserEmail) return [];
-    return threads.filter(t => t.ownerEmail === currentUserEmail);
+    return threads.filter((t) => t.ownerEmail?.toLowerCase() === currentUserEmail.toLowerCase());
   }, [threads, currentUserEmail]);
 
   useEffect(() => {
@@ -1230,6 +1251,30 @@ export default function App() {
       setRecapNewThreadTitle(defaultTitle);
     }
   }, [meetingTitle, recapData, recapNewThreadTitle]);
+
+  // Loading indicator helper cycles through realistic milestones
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const steps = [
+      "Analyzing transcript structure...",
+      "Identifying speaker context and intent...",
+      "Extracting critical decision points...",
+      "Drafting executive summary...",
+      "Isolating action items and assignees...",
+      "Finalizing follow-up meeting agenda..."
+    ];
+
+    let currentIdx = 0;
+    setLoadingStep(steps[0]);
+
+    const interval = setInterval(() => {
+      currentIdx = (currentIdx + 1) % steps.length;
+      setLoadingStep(steps[currentIdx]);
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   // Persist threads to localStorage
   useEffect(() => {
@@ -2026,7 +2071,7 @@ export default function App() {
       if (t.id !== threadId) return t;
       return {
         ...t,
-        entries: t.entries.map(e => {
+        entries: (t.entries || []).map((e: any) => {
           if (e.id !== entryId) return e;
           const updatedItems = [...e.actionItems];
           updatedItems[itemIdx] = {
@@ -2049,7 +2094,7 @@ export default function App() {
       if (t.id !== threadId) return t;
       return {
         ...t,
-        entries: t.entries.filter(e => e.id !== entryId)
+        entries: (t.entries || []).filter((e: any) => e.id !== entryId)
       };
     }));
   };
@@ -2115,7 +2160,7 @@ export default function App() {
       }
       return {
         ...t,
-        allowedEmails: t.allowedEmails.filter(e => e !== email)
+        allowedEmails: (t.allowedEmails || []).filter((e: any) => e !== email)
       };
     }));
   };
@@ -3914,9 +3959,9 @@ ${followUpStr}
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                        {visibleThreads.slice(0, 3).map((t) => {
-                          const allTasks = t.entries.flatMap(e => e.actionItems);
-                          const completedCount = allTasks.filter(item => item.completed).length;
+                        {visibleThreads.slice(0, 3).map((t: MeetingThread) => {
+                          const allTasks = t.entries.flatMap((e: MeetingEntry) => e.actionItems);
+                          const completedCount = allTasks.filter((item: any) => item.completed).length;
                           const totalCount = allTasks.length;
 
                           return (
@@ -5938,8 +5983,8 @@ ${followUpStr}
                           }
 
                           // Calculate aggregate rolling tasks
-                          const allTasks = activeThread.entries.flatMap(e =>
-                            e.actionItems.map((item, idx) => ({
+                          const allTasks = activeThread.entries.flatMap((e: MeetingEntry) =>
+                            e.actionItems.map((item: any, idx: number) => ({
                               ...item,
                               entryId: e.id,
                               entryTitle: e.meetingTitle || e.recapTitle,
@@ -5947,7 +5992,7 @@ ${followUpStr}
                               originalIndex: idx
                             }))
                           );
-                          const completedCount = allTasks.filter(t => t.completed).length;
+                          const completedCount = (allTasks || []).filter((t: any) => Boolean(t.completed || t.status === "completed" || t.isCompleted)).length;
                           const totalCount = allTasks.length;
                           const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
@@ -6040,7 +6085,7 @@ ${followUpStr}
                                       {(!activeThread.allowedEmails || activeThread.allowedEmails.length === 0) ? (
                                         <div className="text-[10px] text-slate-400 italic py-1 pl-1">No other members added to this thread.</div>
                                       ) : (
-                                        activeThread.allowedEmails.map((email) => {
+                                        activeThread.allowedEmails.map((email: string) => {
                                           const profile = userProfiles.find(p => p.email === email);
                                           return (
                                             <div key={email} className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
@@ -6120,7 +6165,7 @@ ${followUpStr}
                                     </div>
                                   ) : (
                                     <div className="relative border-l border-indigo-100 ml-3 pl-4 space-y-4 pt-1">
-                                      {activeThread.entries.map((entry) => {
+                                      {activeThread.entries.map((entry: MeetingEntry) => {
                                         const isExpanded = expandedEntryIds[entry.id] ?? true;
                                         return (
                                           <div key={entry.id} className="relative group">
@@ -6176,7 +6221,7 @@ ${followUpStr}
                                                     <div>
                                                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Key Topics Discussed</div>
                                                       <div className="flex flex-wrap gap-1">
-                                                        {entry.keyTopics.map((topic, i) => (
+                                                        {entry.keyTopics.map((topic: string, i: number) => (
                                                           <span key={i} className="text-[9px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-semibold font-sans">
                                                             {topic}
                                                           </span>
@@ -6186,7 +6231,7 @@ ${followUpStr}
                                                     <div>
                                                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Proposed Agenda</div>
                                                       <ul className="list-decimal list-inside text-slate-600 text-[10px] space-y-0.5 font-medium">
-                                                        {entry.suggestedAgenda.map((agenda, i) => (
+                                                        {entry.suggestedAgenda.map((agenda: string, i: number) => (
                                                           <li key={i} className="truncate">{agenda}</li>
                                                         ))}
                                                       </ul>
@@ -6200,7 +6245,7 @@ ${followUpStr}
                                                       <div className="text-[10px] text-slate-400 italic">No action items found for this session.</div>
                                                     ) : (
                                                       <div className="space-y-1.5">
-                                                        {entry.actionItems.map((item, idx) => (
+                                                        {entry.actionItems.map((item: any, idx: number) => (
                                                           <div
                                                             key={idx}
                                                             className={`flex items-start gap-2 p-1.5 rounded transition-colors ${item.completed ? "bg-slate-50/40 opacity-70" : "bg-white"
@@ -6269,7 +6314,7 @@ ${followUpStr}
                                     </div>
                                   ) : (
                                     <div className="space-y-2">
-                                      {allTasks.map((task, i) => (
+                                      {allTasks.map((task: any, i: number) => (
                                         <div
                                           key={i}
                                           className={`bg-white border border-slate-200 rounded-lg p-3 flex items-start gap-2.5 shadow-2xs hover:border-slate-300 transition-colors ${task.completed ? "bg-slate-50/40 opacity-70" : ""
