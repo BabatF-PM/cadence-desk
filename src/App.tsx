@@ -1178,6 +1178,7 @@ export default function App() {
   }, [threads, currentUserEmail]);
 
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [selectedViewingThread, setSelectedViewingThread] = useState<any | null>(null);
 
   // Active Thread Security Fallback
   useEffect(() => {
@@ -1193,40 +1194,133 @@ export default function App() {
     }
   }, [currentUserEmail, visibleThreads, activeThreadId]);
 
-  // --- Dedicated Thread Loader ---
+// Helper: Checks if the current user is an authorized member of a thread
+  const isAuthorizedThreadMember = (thread: any, userEmail: string | null) => {
+    if (!thread || !userEmail) return false;
+    const norm = userEmail.trim().toLowerCase();
+
+    // 1. Is Owner
+    const isOwner = Boolean(thread.ownerEmail && String(thread.ownerEmail).trim().toLowerCase() === norm);
+    if (isOwner) return true;
+
+    // 2. Is in Allowed Emails
+    if (Array.isArray(thread.allowedEmails)) {
+      const isAllowed = thread.allowedEmails.some(
+        (e: any) => typeof e === "string" && e.trim().toLowerCase() === norm
+      );
+      if (isAllowed) return true;
+    }
+
+    // 3. Is in Thread Attendees
+    if (Array.isArray(thread.attendees)) {
+      const isAtt = thread.attendees.some((a: any) => {
+        const email = typeof a === "string" ? a : a?.email || a?.emailAddress?.address;
+        return typeof email === "string" && email.trim().toLowerCase() === norm;
+      });
+      if (isAtt) return true;
+    }
+
+    // 4. Is in any sub-entry attendees
+    if (Array.isArray(thread.entries)) {
+      const isInEntries = thread.entries.some((entry: any) =>
+        Array.isArray(entry?.attendees) &&
+        entry.attendees.some((a: any) => {
+          const email = typeof a === "string" ? a : a?.email || a?.emailAddress?.address;
+          return typeof email === "string" && email.trim().toLowerCase() === norm;
+        })
+      );
+      if (isInEntries) return true;
+    }
+
+    // Fallback: If thread is unowned / legacy local thread
+    return !thread.ownerEmail;
+  };
+
+// --- Dedicated Thread Loader (Viewer Mode) ---
   const handleOpenThread = (thread: any) => {
     if (!thread) return;
+    setSelectedViewingThread(thread);
+  };
+// --- 1. Toggle Task Completion inside a Thread ---
+  const handleToggleThreadTask = (threadId: string, entryIndex: number, taskIndex: number) => {
+    setThreads((prevThreads) => {
+      const updated = prevThreads.map((t) => {
+        if (t.id !== threadId) return t;
 
-    // 1. Set active thread ID
-    setActiveThreadId(thread.id || null);
+        const updatedEntries = [...(t.entries || [])];
+        if (!updatedEntries[entryIndex]) return t;
 
-    // 2. Extract latest entry from thread entries array if present
-    const latestEntry = Array.isArray(thread.entries) && thread.entries.length > 0
-      ? thread.entries[thread.entries.length - 1]
-      : null;
+        const targetEntry = { ...updatedEntries[entryIndex] };
+        const tasksList = [...(targetEntry.actionItems || targetEntry.tasks || [])];
+        
+        if (!tasksList[taskIndex]) return t;
 
-    // 3. Populate Meeting Title
-    const titleToSet = thread.title || latestEntry?.title;
-    if (titleToSet) {
-      setMeetingTitle(titleToSet);
-    }
+        const currentTask = tasksList[taskIndex];
+        const isCompleted = typeof currentTask === "object" 
+          ? Boolean(currentTask.completed || currentTask.status === "completed") 
+          : false;
 
-    // 4. Populate Attendees
-    const attendeesToSet = (Array.isArray(thread.attendees) && thread.attendees.length > 0)
-      ? thread.attendees
-      : latestEntry?.attendees;
-    if (Array.isArray(attendeesToSet) && attendeesToSet.length > 0) {
-      setAttendees(attendeesToSet);
-    }
+        const updatedTask = typeof currentTask === "string" 
+          ? { text: currentTask, task: currentTask, completed: true }
+          : { ...currentTask, completed: !isCompleted, status: !isCompleted ? "completed" : "pending" };
 
-    // 5. Populate Tasks / Action Items
-    // Note: Tasks are managed via recapData.actionItems and thread entry integration
-    // const tasksToSet = (Array.isArray(thread.tasks) && thread.tasks.length > 0)
-    //   ? thread.tasks
-    //   : latestEntry?.tasks;
+        tasksList[taskIndex] = updatedTask;
+        targetEntry.actionItems = tasksList;
+        targetEntry.tasks = tasksList;
+        updatedEntries[entryIndex] = targetEntry;
 
-    // 6. Scroll smoothly to the workspace desk
-    window.scrollTo({ top: 0, behavior: "smooth" });
+        const updatedThread = { ...t, entries: updatedEntries };
+        setSelectedViewingThread(updatedThread);
+        return updatedThread;
+      });
+
+      try {
+        localStorage.setItem("cadence_threads", JSON.stringify(updated));
+        localStorage.setItem("m_synchron_threads", JSON.stringify(updated));
+      } catch (err) {
+        console.error("Failed to persist thread update:", err);
+      }
+      return updated;
+    });
+  };
+
+  // --- 2. Add Member Note to a Thread Entry ---
+  const handleAddThreadNote = (threadId: string, entryIndex: number, newNoteText: string) => {
+    if (!newNoteText.trim()) return;
+
+    setThreads((prevThreads) => {
+      const updated = prevThreads.map((t) => {
+        if (t.id !== threadId) return t;
+
+        const updatedEntries = [...(t.entries || [])];
+        if (!updatedEntries[entryIndex]) return t;
+
+        const targetEntry = { ...updatedEntries[entryIndex] };
+        const author = currentUserEmail || "Member";
+        const timeStamp = new Date().toLocaleDateString(undefined, { 
+          month: "short", 
+          day: "numeric", 
+          hour: "2-digit", 
+          minute: "2-digit" 
+        });
+        const formattedNote = `\n\n💬 [${author} • ${timeStamp}]: ${newNoteText.trim()}`;
+
+        targetEntry.summary = (targetEntry.summary || "") + formattedNote;
+        updatedEntries[entryIndex] = targetEntry;
+
+        const updatedThread = { ...t, entries: updatedEntries };
+        setSelectedViewingThread(updatedThread);
+        return updatedThread;
+      });
+
+      try {
+        localStorage.setItem("cadence_threads", JSON.stringify(updated));
+        localStorage.setItem("m_synchron_threads", JSON.stringify(updated));
+      } catch (err) {
+        console.error("Failed to persist note:", err);
+      }
+      return updated;
+    });
   };
 
   const [saveTargetThreadId, setSaveTargetThreadId] = useState("");
@@ -1980,11 +2074,17 @@ export default function App() {
     setTimeout(() => setSaveSuccessMessage(null), 4000);
   };
 
+// --- Save / Append to Recurring Thread (Multi-Member Support) ---
   const handleSaveToThread = () => {
     if (!recapData) return;
 
     let targetThreadId = saveTargetThreadId;
     let updatedThreads = [...threads];
+
+    // Collect current attendee identifiers
+    const currentAttendeeEmails = (attendees || [])
+      .map((a: any) => (typeof a === "string" ? a : a?.email || a?.emailAddress?.address || a?.name))
+      .filter(Boolean);
 
     // 1. Handle creating a new thread if needed
     if (saveTargetThreadId === "new") {
@@ -1993,13 +2093,19 @@ export default function App() {
         alert("Please specify a title for the new recurring thread.");
         return;
       }
-      const newThread: MeetingThread = {
+
+      const initialAllowed = Array.from(
+        new Set([currentUserEmail, ...currentAttendeeEmails])
+      ).filter(Boolean) as string[];
+
+      const newThread: any = {
         id: "thread-" + Date.now(),
         title: trimmedTitle,
         createdAt: new Date().toISOString().split("T")[0],
-        entries: [],
-        ownerEmail: currentUserEmail,
-        allowedEmails: []
+        ownerEmail: currentUserEmail || "unassigned",
+        allowedEmails: initialAllowed,
+        attendees: attendees,
+        entries: []
       };
       updatedThreads.push(newThread);
       targetThreadId = newThread.id;
@@ -2011,24 +2117,59 @@ export default function App() {
       return;
     }
 
-    const threadIndex = updatedThreads.findIndex(t => t.id === targetThreadId);
-    if (threadIndex === -1) return;
+    const threadIndex = updatedThreads.findIndex((t) => t.id === targetThreadId);
+    if (threadIndex === -1) {
+      alert("Selected thread could not be found.");
+      return;
+    }
 
-    const newEntry = buildCurrentRecapEntry();
+    const targetThread = updatedThreads[threadIndex];
+
+    // ✅ Member Authorization Check
+    if (!isAuthorizedThreadMember(targetThread, currentUserEmail)) {
+      alert("You are not an authorized member or owner of this recurring thread.");
+      return;
+    }
+
+    const newEntry = typeof buildCurrentRecapEntry === "function" 
+      ? buildCurrentRecapEntry() 
+      : {
+          id: "entry-" + Date.now(),
+          title: meetingTitle || `Session #${(targetThread.entries?.length || 0) + 1}`,
+          date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+          summary: recapData.summary || transcript || "",
+          actionItems: recapData.actionItems || [],
+          attendees: attendees,
+          author: currentUserEmail || "Member",
+        };
+
     if (!newEntry) return;
 
+    // Merge new attendees into allowed list
+    const updatedAllowed = Array.from(
+      new Set([...(targetThread.allowedEmails || []), currentUserEmail, ...currentAttendeeEmails])
+    ).filter(Boolean) as string[];
+
     updatedThreads[threadIndex] = {
-      ...updatedThreads[threadIndex],
-      entries: [newEntry, ...updatedThreads[threadIndex].entries]
+      ...targetThread,
+      allowedEmails: updatedAllowed,
+      entries: [newEntry, ...(targetThread.entries || [])]
     };
 
     setThreads(updatedThreads);
+    try {
+      localStorage.setItem("cadence_threads", JSON.stringify(updatedThreads));
+      localStorage.setItem("m_synchron_threads", JSON.stringify(updatedThreads));
+    } catch (e) {
+      console.error("Failed to save thread:", e);
+    }
+
     setActiveThreadId(targetThreadId);
     setSaveTargetThreadId("");
-    setSaveSuccessMessage(`Successfully saved to "${updatedThreads[threadIndex].title}"!`);
-    setTimeout(() => {
-      setSaveSuccessMessage(null);
-    }, 4000);
+    if (typeof setSaveSuccessMessage === "function") {
+      setSaveSuccessMessage(`Successfully saved to "${updatedThreads[threadIndex].title}"!`);
+      setTimeout(() => setSaveSuccessMessage(null), 4000);
+    }
   };
 
   const handleSaveRecapToNewThread = () => {
@@ -2039,30 +2180,68 @@ export default function App() {
       return;
     }
 
-    const newThread: MeetingThread = {
+    const currentAttendeeEmails = (attendees || [])
+      .map((a: any) => (typeof a === "string" ? a : a?.email || a?.emailAddress?.address || a?.name))
+      .filter(Boolean);
+
+    const initialAllowed = Array.from(
+      new Set([currentUserEmail, ...currentAttendeeEmails])
+    ).filter(Boolean) as string[];
+
+    const newThread: any = {
       id: "thread-" + Date.now(),
       title: trimmedTitle,
       createdAt: new Date().toISOString().split("T")[0],
-      entries: [],
-      ownerEmail: currentUserEmail,
-      allowedEmails: []
+      ownerEmail: currentUserEmail || "unassigned",
+      allowedEmails: initialAllowed,
+      attendees: attendees,
+      entries: []
     };
 
-    const entry = buildCurrentRecapEntry();
+    const entry = typeof buildCurrentRecapEntry === "function" 
+      ? buildCurrentRecapEntry()
+      : {
+          id: "entry-" + Date.now(),
+          title: meetingTitle || "Session #1",
+          date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+          summary: recapData.summary || transcript || "",
+          actionItems: recapData.actionItems || [],
+          attendees: attendees,
+          author: currentUserEmail || "Member",
+        };
+
     if (!entry) return;
 
     const nextThreads = [...threads, { ...newThread, entries: [entry, ...newThread.entries] }];
     setThreads(nextThreads);
+    try {
+      localStorage.setItem("cadence_threads", JSON.stringify(nextThreads));
+      localStorage.setItem("m_synchron_threads", JSON.stringify(nextThreads));
+    } catch (e) {
+      console.error("Failed to persist thread:", e);
+    }
+
     setActiveThreadId(newThread.id);
-    setRecapThreadMode(null);
-    setRecapNewThreadTitle("");
-    setSaveSuccessMessage(`Saved to new recurring thread "${newThread.title}".`);
-    setTimeout(() => setSaveSuccessMessage(null), 4000);
+    if (typeof setRecapThreadMode === "function") setRecapThreadMode(null);
+    if (typeof setRecapNewThreadTitle === "function") setRecapNewThreadTitle("");
+    if (typeof setSaveSuccessMessage === "function") {
+      setSaveSuccessMessage(`Saved to new recurring thread "${newThread.title}".`);
+      setTimeout(() => setSaveSuccessMessage(null), 4000);
+    }
   };
 
   const handleSaveRecapToExistingThread = () => {
     if (!recapData || !recapThreadSelectId) return;
-    saveCurrentRecapToThread(recapThreadSelectId);
+
+    const targetThread = threads.find((t) => t.id === recapThreadSelectId);
+    if (targetThread && !isAuthorizedThreadMember(targetThread, currentUserEmail)) {
+      alert("You are not an authorized member or owner of this recurring thread.");
+      return;
+    }
+
+    if (typeof saveCurrentRecapToThread === "function") {
+      saveCurrentRecapToThread(recapThreadSelectId);
+    }
   };
 
   // Toggle checklist inside active thread's entries
@@ -3940,13 +4119,17 @@ ${followUpStr}
                         Existing Recurring Threads ({visibleThreads.length})
                       </h4>
                       <button
+                        type="button"
                         onClick={() => {
                           if (!currentUser) {
                             setIsSetupModalOpen(true);
                           } else {
-                            setActiveTab("threads");
+                            if (typeof setRecapThreadMode === "function") {
+                              setRecapThreadMode("existing");
                           }
-                        }}
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                        }
+                      }}
                         className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold transition-colors cursor-pointer"
                       >
                         View All Hub →
@@ -3967,10 +4150,7 @@ ${followUpStr}
                           return (
                             <div
                               key={t.id}
-                              onClick={() => {
-                                setActiveThreadId(t.id);
-                                setActiveTab("threads");
-                              }}
+                              onClick={() => handleOpenThread(t)}
                               className="bg-slate-50/60 hover:bg-indigo-50/45 border border-slate-150 hover:border-indigo-200 p-2.5 rounded-lg transition-all cursor-pointer flex items-center justify-between gap-3 group"
                             >
                               <div className="min-w-0 flex-1">
@@ -4014,7 +4194,6 @@ ${followUpStr}
                       </div>
                     </div>
                   )}
-
                   {/* Visual Tab Navigation Headers */}
                   <div className="bg-slate-100/80 rounded-xl p-1 border border-slate-200/60 shadow-xs flex flex-wrap gap-1">
                     <button
@@ -6045,18 +6224,18 @@ ${followUpStr}
                                 </div>
                               </div>
 
-                              {/* Thread Access & Member Management */}
+{/* Thread Access & Member Management */}
                               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-150/80 pb-2">
                                   <div className="flex items-center gap-2">
                                     <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
                                     <div>
                                       <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-700">Thread Access Control</h4>
-                                      <p className="text-[9px] text-slate-500">Only authorized members can view or manage this recurring thread.</p>
+                                      <p className="text-[9px] text-slate-500">Authorized members can view, manage, and collaborate on this recurring thread.</p>
                                     </div>
                                   </div>
                                   <div className="text-[9px] font-bold font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-md shrink-0">
-                                    {activeThread.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Read/Write Access"}
+                                    {activeThread.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Authorized Member Access"}
                                   </div>
                                 </div>
 
@@ -6098,7 +6277,7 @@ ${followUpStr}
                                                   <p className="text-[9px] text-slate-450 truncate">{email}</p>
                                                 </div>
                                               </div>
-                                              {activeThread.ownerEmail === currentUserEmail ? (
+                                              {isAuthorizedThreadMember(activeThread, currentUserEmail) ? (
                                                 <button
                                                   onClick={() => handleRemoveMemberFromThread(activeThread.id, email)}
                                                   className="text-red-500 hover:bg-red-50 hover:text-red-700 px-2 py-1 rounded-md transition-colors font-bold text-[10px] cursor-pointer"
@@ -6116,10 +6295,10 @@ ${followUpStr}
                                     </div>
                                   </div>
 
-                                  {/* Add Member Form (Only visible to owner) */}
+                                  {/* Add Member Form (Available to all authorized members) */}
                                   <div className="space-y-2">
                                     <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Grant Thread Access</span>
-                                    {activeThread.ownerEmail === currentUserEmail ? (
+                                    {isAuthorizedThreadMember(activeThread, currentUserEmail) ? (
                                       <div className="space-y-2 bg-white border border-slate-150 p-2.5 rounded-lg shadow-2xs">
                                         <p className="text-[10px] text-slate-500">Authorize another colleague to view this rolling thread and log meetings.</p>
                                         <div className="flex gap-2">
@@ -6147,13 +6326,13 @@ ${followUpStr}
                                     ) : (
                                       <div className="bg-slate-100 border border-dashed border-slate-200 p-3 rounded-lg text-center flex flex-col items-center justify-center h-[90px]">
                                         <Lock className="w-4 h-4 text-slate-400 mb-1" />
-                                        <p className="text-[10px] text-slate-500 font-medium">Only the thread owner can grant access to others.</p>
+                                        <p className="text-[10px] text-slate-500 font-medium">You must be an authorized member of this thread to manage access.</p>
                                       </div>
                                     )}
                                   </div>
                                 </div>
                               </div>
-
+                              
                               {/* Thread SubTab Timeline */}
                               {threadSubTab === "timeline" && (
                                 <div className="space-y-3">
@@ -6982,7 +7161,7 @@ ${followUpStr}
       </div>
     </footer>
 
-    {/* Grounded Assistant Chatbot Widget */}
+{/* Grounded Assistant Chatbot Widget */}
     <SynchronChatbot
       key={`chatbot-${currentUserEmail || "guest"}-${logoutCount}`}
       activeTab={activeTab}
@@ -7012,6 +7191,186 @@ ${followUpStr}
         onConsentGiven={() => setIsLegalAccepted(true)}
       />
     )}
+
+    {/* Dedicated Interactive Recurring Thread Viewer Modal */}
+    {selectedViewingThread && (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          
+          {/* Modal Header */}
+          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono">
+                Recurring Thread Overview
+              </span>
+              <h3 className="text-lg font-bold text-white mt-0.5">
+                {selectedViewingThread.title || "Meeting Thread"}
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                Owner: {selectedViewingThread.ownerEmail || currentUserEmail || "Authorized"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedViewingThread(null)}
+              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer text-sm font-bold"
+            >
+              ✕ Close
+            </button>
+          </div>
+
+          {/* Modal Body */}
+          <div className="p-6 overflow-y-auto space-y-5 text-left">
+            {/* Attendees */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Authorized Members & Attendees
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {(selectedViewingThread.allowedEmails || []).concat(
+                  (selectedViewingThread.attendees || []).map((a: any) => typeof a === "string" ? a : a?.email || a?.name)
+                ).filter((val: any, idx: number, self: any[]) => Boolean(val) && self.indexOf(val) === idx)
+                .map((att: string, i: number) => (
+                  <span key={i} className="px-2.5 py-1 text-xs bg-slate-800 text-indigo-300 border border-slate-700 rounded-md font-mono">
+                    {att}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Logged Sessions */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                Logged Sessions & History ({selectedViewingThread.entries?.length || 0})
+              </h4>
+
+              {(!selectedViewingThread.entries || selectedViewingThread.entries.length === 0) ? (
+                <div className="p-4 bg-slate-800/40 border border-slate-700 rounded-xl text-center text-xs text-slate-400 italic">
+                  No historical sessions logged yet.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {selectedViewingThread.entries.map((entry: any, index: number) => (
+                    <div key={entry.id || index} className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+                        <span className="text-xs font-bold text-white">
+                          {entry.title || `Session #${index + 1}`}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {entry.date || "Past Session"}
+                        </span>
+                      </div>
+
+                      {/* Summary Notes */}
+                      {entry.summary && (
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Summary & Discussion Notes
+                          </span>
+                          <p className="text-xs text-slate-300 mt-1 leading-relaxed whitespace-pre-wrap bg-slate-900/50 p-3 rounded-lg border border-slate-800">
+                            {entry.summary}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Add Note Form */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const input = (e.currentTarget.elements.namedItem(`note-${index}`) as HTMLInputElement);
+                          if (input && input.value) {
+                            handleAddThreadNote(selectedViewingThread.id, index, input.value);
+                            input.value = "";
+                          }
+                        }}
+                        className="flex gap-2 pt-1"
+                      >
+                        <input
+                          name={`note-${index}`}
+                          type="text"
+                          placeholder="Add a progress update or note..."
+                          className="flex-1 bg-slate-950/70 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                        />
+                        <button
+                          type="submit"
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                        >
+                          + Add Note
+                        </button>
+                      </form>
+
+                      {/* Tasks with Click-to-Complete */}
+                      {(entry.actionItems || entry.tasks) && (entry.actionItems || entry.tasks).length > 0 && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Action Items & Tasks (Click to toggle)
+                            </span>
+                            <span className="text-[10px] font-mono text-indigo-400">
+                              {(entry.actionItems || entry.tasks).filter((t: any) => t.completed || t.status === "completed").length}/{(entry.actionItems || entry.tasks).length} Done
+                            </span>
+                          </div>
+
+                          <ul className="space-y-2">
+                            {(entry.actionItems || entry.tasks).map((task: any, tIdx: number) => {
+                              const isDone = Boolean(task?.completed || task?.status === "completed");
+                              const taskText = typeof task === "string" ? task : task?.task || task?.title || task?.text || "Task";
+                              const ownerText = task?.owner || task?.assignee;
+
+                              return (
+                                <li
+                                  key={task?.id || tIdx}
+                                  onClick={() => handleToggleThreadTask(selectedViewingThread.id, index, tIdx)}
+                                  className="flex items-start gap-2.5 bg-slate-850/60 hover:bg-slate-800 p-2 rounded-lg border border-slate-700/60 transition-all cursor-pointer select-none group"
+                                >
+                                  <button
+                                    type="button"
+                                    className={`mt-0.5 inline-flex items-center justify-center w-4 h-4 rounded text-[11px] font-bold shrink-0 transition-colors ${
+                                      isDone
+                                        ? "bg-emerald-500 text-slate-950 font-black"
+                                        : "bg-slate-800 text-slate-500 group-hover:text-slate-300 border border-slate-600"
+                                    }`}
+                                  >
+                                    {isDone ? "✓" : ""}
+                                  </button>
+                                  <div className="flex-1 min-w-0">
+                                    <span className={`text-xs leading-relaxed inline-block ${isDone ? "line-through text-slate-500" : "text-slate-200 font-medium group-hover:text-white"}`}>
+                                      {taskText}
+                                    </span>
+                                  </div>
+                                  {ownerText && (
+                                    <span className="text-[10px] font-mono text-indigo-300 bg-indigo-950/60 border border-indigo-700/40 px-2 py-0.5 rounded shrink-0 self-start">
+                                      @{ownerText}
+                                    </span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Modal Footer */}
+          <div className="px-6 py-3 border-t border-slate-800 bg-slate-900/90 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setSelectedViewingThread(null)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+            >
+              Done
+            </button>
+          </div>
+
+        </div>
+      </div>
+    )}
+
     </div>
   );
 }
