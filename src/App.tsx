@@ -1196,7 +1196,7 @@ export default function App() {
 
 // Helper: Checks if the current user is an authorized member of a thread
   const isAuthorizedThreadMember = (thread: any, userEmail: string | null) => {
-    if (!thread || !userEmail) return false;
+    if (!thread || !userEmail || userEmail === "unassigned") return false;
     const norm = userEmail.trim().toLowerCase();
 
     // 1. Is Owner
@@ -1236,11 +1236,68 @@ export default function App() {
     return !thread.ownerEmail;
   };
 
-// --- Dedicated Thread Loader (Viewer Mode) ---
+  // --- Add Member by Custom Email & Send Dispatch Notification ---
+  const handleAddMemberByEmailWithInvite = async (threadId: string, emailInput: string) => {
+    const cleanEmail = emailInput.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      alert("Please enter a valid email address.");
+      return;
+    }
+
+    const targetThread = threads.find((t) => t.id === threadId);
+    if (!targetThread) return;
+
+    if (targetThread.allowedEmails?.includes(cleanEmail) || targetThread.ownerEmail?.toLowerCase() === cleanEmail) {
+      alert("This user is already an authorized member of this thread.");
+      return;
+    }
+
+    // 1. Update Thread Members State & Storage
+    const updatedAllowed = Array.from(new Set([...(targetThread.allowedEmails || []), cleanEmail]));
+    const nextThreads = threads.map((t) => {
+      if (t.id !== threadId) return t;
+      return { ...t, allowedEmails: updatedAllowed };
+    });
+
+    setThreads(nextThreads);
+    try {
+      localStorage.setItem("cadence_threads", JSON.stringify(nextThreads));
+      localStorage.setItem("m_synchron_threads", JSON.stringify(nextThreads));
+    } catch (e) {
+      console.error("Storage persistence error:", e);
+    }
+
+    // 2. Automated Dispatch Notification
+    const inviter = currentUserEmail || "A team collaborator";
+    const subject = `[Cadence Desk] You have been added to recurring thread: "${targetThread.title}"`;
+    const messageBody = `Hello,\n\n${inviter} has granted you collaborator access to the recurring meeting series "${targetThread.title}".\n\nYou can now log in to Cadence Desk to review past iterations, append session action items, mark tasks as complete, and view collaborative team notes.\n\n---\nCadence Desk • Enterprise AI Synchron`;
+
+    try {
+      const outboxFn = (window as any).executeOutboxDispatch;
+      if (typeof outboxFn === "function") {
+        await outboxFn({
+          to: [cleanEmail],
+          subject: subject,
+          body: messageBody,
+        });
+        alert(`Access granted to ${cleanEmail} and notification email sent!`);
+      } else {
+        alert(`✓ Access granted to ${cleanEmail}! (Notification logged for ${inviter}).`);
+      }
+    } catch (error) {
+      console.warn("Could not dispatch invite notification:", error);
+      alert(`✓ Access granted to ${cleanEmail}!`);
+    }
+  };
+
+  // --- Dedicated Thread Loader (Viewer Mode) ---
   const handleOpenThread = (thread: any) => {
     if (!thread) return;
     setSelectedViewingThread(thread);
   };
+
 // --- 1. Toggle Task Completion inside a Thread ---
   const handleToggleThreadTask = (threadId: string, entryIndex: number, taskIndex: number) => {
     setThreads((prevThreads) => {
@@ -2051,30 +2108,82 @@ export default function App() {
     };
   };
 
-  const saveCurrentRecapToThread = (threadId: string) => {
+const saveCurrentRecapToThread = (threadId: string) => {
     if (!recapData || !threadId) return;
 
-    const entry = buildCurrentRecapEntry();
+    const targetThread = threads.find((t) => t.id === threadId);
+    if (!targetThread) {
+      alert("Selected thread could not be found.");
+      return;
+    }
+
+    // ✅ Allow all authorized members (Owner, Allowed Emails, Attendees)
+    if (!isAuthorizedThreadMember(targetThread, currentUserEmail)) {
+      alert("You are not an authorized member or owner of this recurring thread.");
+      return;
+    }
+
+    const entry = typeof buildCurrentRecapEntry === "function" 
+      ? buildCurrentRecapEntry()
+      : {
+          id: `entry-${Date.now()}`,
+          title: meetingTitle || `Session #${(targetThread.entries?.length || 0) + 1}`,
+          date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+          summary: recapData.summary || transcript || "",
+          actionItems: recapData.actionItems || [],
+          attendees: attendees,
+          author: currentUserEmail || "Member",
+        };
+
     if (!entry) return;
 
-    setThreads(prev => prev.map(t => {
-      if (t.id !== threadId) return t;
-      return {
-        ...t,
-        entries: [entry, ...t.entries]
-      };
-    }));
+    // Collect attendee emails from current meeting
+    const currentAttendeeEmails = (attendees || [])
+      .map((a: any) => (typeof a === "string" ? a : a?.email || a?.emailAddress?.address || a?.name))
+      .filter(Boolean);
+
+    // Merge any new attendees into the thread's allowed list
+    const updatedAllowed = Array.from(
+      new Set([
+        ...(targetThread.allowedEmails || []),
+        currentUserEmail,
+        ...currentAttendeeEmails,
+      ])
+    ).filter(Boolean) as string[];
+
+    setThreads((prev) => {
+      const nextThreads = prev.map((t) => {
+        if (t.id !== threadId) return t;
+        return {
+          ...t,
+          allowedEmails: updatedAllowed,
+          entries: [entry, ...(t.entries || [])],
+        };
+      });
+
+      // Persist to localStorage immediately
+      try {
+        localStorage.setItem("cadence_threads", JSON.stringify(nextThreads));
+        localStorage.setItem("m_synchron_threads", JSON.stringify(nextThreads));
+      } catch (err) {
+        console.error("Failed to persist thread update:", err);
+      }
+
+      return nextThreads;
+    });
 
     setActiveThreadId(threadId);
     setSaveTargetThreadId("");
-    setRecapThreadMode(null);
-    setRecapThreadSelectId("");
-    setRecapNewThreadTitle("");
-    setSaveSuccessMessage(`Successfully saved this recap as a new iteration in the thread.`);
-    setTimeout(() => setSaveSuccessMessage(null), 4000);
+    if (typeof setRecapThreadMode === "function") setRecapThreadMode(null);
+    if (typeof setRecapThreadSelectId === "function") setRecapThreadSelectId("");
+    if (typeof setRecapNewThreadTitle === "function") setRecapNewThreadTitle("");
+    if (typeof setSaveSuccessMessage === "function") {
+      setSaveSuccessMessage(`Successfully saved this recap as a new iteration in "${targetThread.title}".`);
+      setTimeout(() => setSaveSuccessMessage(null), 4000);
+    }
   };
 
-// --- Save / Append to Recurring Thread (Multi-Member Support) ---
+  // --- Save / Append to Recurring Thread (Multi-Member Support) ---
   const handleSaveToThread = () => {
     if (!recapData) return;
 
@@ -2312,35 +2421,45 @@ export default function App() {
     setCreateThreadNameInput("");
   };
 
-  // Add a member to a thread's access list
+  // Add a member to a thread's access list (Allows all authorized collaborators)
   const handleAddMemberToThread = (threadId: string, email: string) => {
     if (!email.trim()) return;
     setThreads(prev => prev.map(t => {
       if (t.id !== threadId) return t;
-      if (t.ownerEmail !== currentUserEmail) {
-        alert("Only the owner can manage access lists.");
+      if (!isAuthorizedThreadMember(t, currentUserEmail)) {
+        alert("You must be an authorized member of this thread to manage access.");
         return t;
       }
-      if (t.allowedEmails.includes(email)) return t;
-      return {
+      if (t.allowedEmails?.includes(email)) return t;
+      const updated = {
         ...t,
-        allowedEmails: [...t.allowedEmails, email]
+        allowedEmails: [...(t.allowedEmails || []), email]
       };
+      try {
+        localStorage.setItem("cadence_threads", JSON.stringify(prev.map(item => item.id === threadId ? updated : item)));
+        localStorage.setItem("m_synchron_threads", JSON.stringify(prev.map(item => item.id === threadId ? updated : item)));
+      } catch (err) {}
+      return updated;
     }));
   };
 
-  // Remove a member from a thread's access list
+  // Remove a member from a thread's access list (Allows all authorized collaborators)
   const handleRemoveMemberFromThread = (threadId: string, email: string) => {
     setThreads(prev => prev.map(t => {
       if (t.id !== threadId) return t;
-      if (t.ownerEmail !== currentUserEmail) {
-        alert("Only the owner can manage access lists.");
+      if (!isAuthorizedThreadMember(t, currentUserEmail)) {
+        alert("You must be an authorized member of this thread to manage access.");
         return t;
       }
-      return {
+      const updated = {
         ...t,
         allowedEmails: (t.allowedEmails || []).filter((e: any) => e !== email)
       };
+      try {
+        localStorage.setItem("cadence_threads", JSON.stringify(prev.map(item => item.id === threadId ? updated : item)));
+        localStorage.setItem("m_synchron_threads", JSON.stringify(prev.map(item => item.id === threadId ? updated : item)));
+      } catch (err) {}
+      return updated;
     }));
   };
 
@@ -5057,22 +5176,28 @@ ${followUpStr}
                           Save to New Recurring Thread
                         </button>
 
-                        <div className="flex flex-1 items-center gap-2 min-w-[220px]">
+<div className="flex flex-1 items-center gap-2 min-w-[220px]">
                           <select
                             value={recapThreadSelectId}
                             onChange={(e) => setRecapThreadSelectId(e.target.value)}
-                            disabled={!ownedThreads.length}
+                            disabled={!visibleThreads.length}
                             className="w-full text-[11px] px-2.5 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium focus:outline-none focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                           >
-                            <option value="">Select existing owned thread</option>
-                            {ownedThreads.map((thread) => (
-                              <option key={thread.id} value={thread.id}>{thread.title}</option>
-                            ))}
+                            <option value="">Select thread to add iteration</option>
+                            {visibleThreads.map((thread) => {
+                              const norm = (currentUserEmail || "").trim().toLowerCase();
+                              const isOwner = Boolean(thread.ownerEmail && String(thread.ownerEmail).trim().toLowerCase() === norm);
+                              return (
+                                <option key={thread.id} value={thread.id}>
+                                  {thread.title} {isOwner ? "👑 (Owner)" : "👥 (Collaborator)"}
+                                </option>
+                              );
+                            })}
                           </select>
                           <button
                             type="button"
                             onClick={handleSaveRecapToExistingThread}
-                            disabled={!recapThreadSelectId || !ownedThreads.length}
+                            disabled={!recapThreadSelectId || !visibleThreads.length}
                             className="whitespace-nowrap bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-700 font-semibold text-[11px] px-3 py-2 rounded-lg transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed cursor-pointer"
                           >
                             Add Iteration
@@ -6235,7 +6360,7 @@ ${followUpStr}
                                     </div>
                                   </div>
                                   <div className="text-[9px] font-bold font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-md shrink-0">
-                                    {activeThread.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Authorized Member Access"}
+                                    {activeThread?.ownerEmail === currentUserEmail ? "👑 Owner Privilege" : "👁️ Authorized Member Access"}
                                   </div>
                                 </div>
 
@@ -6248,20 +6373,20 @@ ${followUpStr}
                                       <div className="flex items-center justify-between bg-white border border-slate-150 p-2 rounded-lg text-xs shadow-2xs">
                                         <div className="flex items-center gap-2 min-w-0">
                                           <div className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-[9px] shrink-0">
-                                            {userProfiles.find(p => p.email === activeThread.ownerEmail)?.avatar || "👤"}
+                                            {userProfiles.find(p => p.email === activeThread?.ownerEmail)?.avatar || "👤"}
                                           </div>
                                           <div className="min-w-0">
                                             <p className="font-bold text-slate-700 truncate">
-                                              {userProfiles.find(p => p.email === activeThread.ownerEmail)?.name || activeThread.ownerEmail}
+                                              {userProfiles.find(p => p.email === activeThread?.ownerEmail)?.name || activeThread?.ownerEmail}
                                             </p>
-                                            <p className="text-[9px] text-slate-400 truncate">{activeThread.ownerEmail}</p>
+                                            <p className="text-[9px] text-slate-400 truncate">{activeThread?.ownerEmail}</p>
                                           </div>
                                         </div>
                                         <span className="text-[8px] font-bold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-mono shrink-0">Owner</span>
                                       </div>
 
                                       {/* Allowed members */}
-                                      {(!activeThread.allowedEmails || activeThread.allowedEmails.length === 0) ? (
+                                      {(!activeThread?.allowedEmails || activeThread.allowedEmails.length === 0) ? (
                                         <div className="text-[10px] text-slate-400 italic py-1 pl-1">No other members added to this thread.</div>
                                       ) : (
                                         activeThread.allowedEmails.map((email: string) => {
@@ -6295,44 +6420,72 @@ ${followUpStr}
                                     </div>
                                   </div>
 
-                                  {/* Add Member Form (Available to all authorized members) */}
+                                  {/* Add Member Form (Directory Selector OR Direct Email Input) */}
                                   <div className="space-y-2">
                                     <span className="text-[9px] font-bold uppercase tracking-widest text-slate-450 block">Grant Thread Access</span>
                                     {isAuthorizedThreadMember(activeThread, currentUserEmail) ? (
-                                      <div className="space-y-2 bg-white border border-slate-150 p-2.5 rounded-lg shadow-2xs">
-                                        <p className="text-[10px] text-slate-500">Authorize another colleague to view this rolling thread and log meetings.</p>
-                                        <div className="flex gap-2">
-                                          <select
-                                            id="add-member-select"
-                                            className="flex-1 text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md focus:outline-none text-slate-700 font-semibold cursor-pointer"
-                                            defaultValue=""
-                                            onChange={(e) => {
-                                              const val = e.target.value;
-                                              if (val) {
-                                                handleAddMemberToThread(activeThread.id, val);
-                                                e.target.value = ""; // Reset
-                                              }
-                                            }}
-                                          >
-                                            <option value="" disabled>-- Select colleague to add --</option>
-                                            {userProfiles.filter(p => p.email !== activeThread.ownerEmail && !activeThread.allowedEmails?.includes(p.email))
-                                              .map((p, idx) => (
-                                                <option key={`${p.email}-${idx}`} value={p.email}>{p.name} ({p.email})</option>
-                                              ))
+                                      <div className="space-y-2.5 bg-white border border-slate-150 p-2.5 rounded-lg shadow-2xs">
+                                        <p className="text-[10px] text-slate-500">Authorize a colleague from the directory or type their email:</p>
+                                        
+                                        {/* Directory Select */}
+                                        <select
+                                          id="add-member-select"
+                                          className="w-full text-[11px] px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md focus:outline-none text-slate-700 font-semibold cursor-pointer"
+                                          defaultValue=""
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val && activeThread?.id) {
+                                              handleAddMemberByEmailWithInvite(activeThread.id, val);
+                                              e.target.value = "";
                                             }
-                                          </select>
-                                        </div>
+                                          }}
+                                        >
+                                          <option value="" disabled>-- Select colleague from directory --</option>
+                                          {userProfiles
+                                            .filter(p => p.email !== activeThread?.ownerEmail && !activeThread?.allowedEmails?.includes(p.email))
+                                            .map((p, idx) => (
+                                              <option key={`${p.email}-${idx}`} value={p.email}>{p.name} ({p.email})</option>
+                                            ))
+                                          }
+                                        </select>
+
+                                        {/* Custom Email Input */}
+                                        <form
+                                          onSubmit={(e) => {
+                                            e.preventDefault();
+                                            const form = e.currentTarget;
+                                            const input = form.elements.namedItem("customInviteEmail") as HTMLInputElement;
+                                            if (input && input.value && activeThread?.id) {
+                                              handleAddMemberByEmailWithInvite(activeThread.id, input.value);
+                                              input.value = "";
+                                            }
+                                          }}
+                                          className="flex gap-1.5 pt-1 border-t border-slate-100"
+                                        >
+                                          <input
+                                            name="customInviteEmail"
+                                            type="email"
+                                            placeholder="colleague@company.com"
+                                            className="flex-1 text-[11px] px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-slate-700 placeholder-slate-400 focus:outline-none"
+                                          />
+                                          <button
+                                            type="submit"
+                                            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-[10px] font-bold transition-colors cursor-pointer shrink-0"
+                                          >
+                                            Add Email
+                                          </button>
+                                        </form>
                                       </div>
                                     ) : (
                                       <div className="bg-slate-100 border border-dashed border-slate-200 p-3 rounded-lg text-center flex flex-col items-center justify-center h-[90px]">
                                         <Lock className="w-4 h-4 text-slate-400 mb-1" />
-                                        <p className="text-[10px] text-slate-500 font-medium">You must be an authorized member of this thread to manage access.</p>
+                                        <p className="text-[10px] text-slate-500 font-medium">Please log in to manage access to this thread.</p>
                                       </div>
                                     )}
                                   </div>
                                 </div>
                               </div>
-                              
+
                               {/* Thread SubTab Timeline */}
                               {threadSubTab === "timeline" && (
                                 <div className="space-y-3">
