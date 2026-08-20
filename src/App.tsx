@@ -1235,12 +1235,11 @@ export default function App() {
     // Fallback: If thread is unowned / legacy local thread
     return !thread.ownerEmail;
   };
-
-  // --- Add Member by Custom Email & Send Dispatch Notification ---
+// --- Add Member & Trigger Automated System Email (cadencedesk@gmail.com) ---
   const handleAddMemberByEmailWithInvite = async (threadId: string, emailInput: string) => {
     const cleanEmail = emailInput.trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    
+
     if (!cleanEmail || !emailRegex.test(cleanEmail)) {
       alert("Please enter a valid email address.");
       return;
@@ -1269,26 +1268,25 @@ export default function App() {
       console.error("Storage persistence error:", e);
     }
 
-    // 2. Automated Dispatch Notification
-    const inviter = currentUserEmail || "A team collaborator";
-    const subject = `[Cadence Desk] You have been added to recurring thread: "${targetThread.title}"`;
-    const messageBody = `Hello,\n\n${inviter} has granted you collaborator access to the recurring meeting series "${targetThread.title}".\n\nYou can now log in to Cadence Desk to review past iterations, append session action items, mark tasks as complete, and view collaborative team notes.\n\n---\nCadence Desk • Enterprise AI Synchron`;
-
+    // 2. Automated Dispatch from cadencedesk@gmail.com
     try {
-      const outboxFn = (window as any).executeOutboxDispatch;
-      if (typeof outboxFn === "function") {
-        await outboxFn({
-          to: [cleanEmail],
-          subject: subject,
-          body: messageBody,
-        });
-        alert(`Access granted to ${cleanEmail} and notification email sent!`);
+      const response = await fetch("/api/send-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: cleanEmail,
+          threadTitle: targetThread.title,
+          inviterEmail: currentUserEmail || "A team collaborator",
+        }),
+      });
+
+      if (response.ok) {
+        alert(`✓ Access granted and invite notification emailed to ${cleanEmail} from cadencedesk@gmail.com!`);
       } else {
-        alert(`✓ Access granted to ${cleanEmail}! (Notification logged for ${inviter}).`);
+        alert(`✓ Access granted to ${cleanEmail} inside Cadence Desk!`);
       }
-    } catch (error) {
-      console.warn("Could not dispatch invite notification:", error);
-      alert(`✓ Access granted to ${cleanEmail}!`);
+    } catch (err) {
+      alert(`✓ Access granted to ${cleanEmail} inside Cadence Desk!`);
     }
   };
 
