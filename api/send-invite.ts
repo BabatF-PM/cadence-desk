@@ -2,31 +2,51 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import nodemailer from 'nodemailer';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Enable CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { to, threadTitle, inviterEmail } = req.body;
+  const { to, threadTitle, inviterEmail } = req.body || {};
 
   if (!to || !threadTitle) {
-    return res.status(400).json({ error: 'Missing required parameters (to, threadTitle)' });
+    return res.status(400).json({ error: 'Missing required parameters: "to" and "threadTitle" are required.' });
   }
 
-  // System Transactional Transporter (cadencedesk@gmail.com)
+  const systemEmail = process.env.SYSTEM_EMAIL || 'cadencedesk@gmail.com';
+  // Strip any accidental spaces/quotes from the app password
+  const systemPass = (process.env.SYSTEM_EMAIL_APP_PASSWORD || '').replace(/\s+/g, '').trim();
+
+  if (!systemPass) {
+    return res.status(500).json({ 
+      error: 'SYSTEM_EMAIL_APP_PASSWORD environment variable is missing on Vercel. Please add it in Vercel Settings -> Environment Variables and redeploy.' 
+    });
+  }
+
+  // System Transactional Transporter
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: process.env.SYSTEM_EMAIL || 'cadencedesk@gmail.com',
-      pass: process.env.SYSTEM_EMAIL_APP_PASSWORD, // 16-character Google App Password
+      user: systemEmail,
+      pass: systemPass,
     },
   });
 
   const inviter = inviterEmail || 'A team collaborator';
   const mailOptions = {
-    from: `"Cadence Desk" <${process.env.SYSTEM_EMAIL || 'cadencedesk@gmail.com'}>`,
-    to: to,
+    from: `"Cadence Desk" <${systemEmail}>`,
+    to: to.trim(),
     subject: `[Cadence Desk] You've been invited to collaborate on "${threadTitle}"`,
-    text: `Hello,\n\n${inviter} has added you as an authorized collaborator to the recurring meeting series "${threadTitle}" on Cadence Desk.\n\nYou can log in now to access past session summaries, check off action items, mark tasks as complete, and append new recaps.\n\n---\nCadence Desk • Enterprise AI Synchron`,
+    text: `Hello,\n\n${inviter} has added you as an authorized collaborator to the recurring meeting series "${threadTitle}" on Cadence Desk.\n\nYou can log in now to review past iterations, append session action items, mark tasks as complete, and view collaborative team notes.\n\n---\nCadence Desk • Enterprise AI Synchron`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
         <div style="margin-bottom: 20px;">
@@ -56,7 +76,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const info = await transporter.sendMail(mailOptions);
     return res.status(200).json({ success: true, messageId: info.messageId });
   } catch (error: any) {
-    console.error('System email dispatch failed:', error);
-    return res.status(500).json({ error: error.message || 'Failed to dispatch email' });
+    console.error('Nodemailer dispatch error:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Gmail SMTP dispatch failed. Verify your App Password.' 
+    });
   }
 }
