@@ -212,6 +212,7 @@ export default function App() {
   // Universal Email Connection State & Config
   const [emailConnectionType, setEmailConnectionType] = useState<"google" | "smtp">("google");
   const [smtpSaveSuccessMessage, setSmtpSaveSuccessMessage] = useState<string | null>(null);
+  const [modalInviteEmail, setModalInviteEmail] = useState<string>("");
 
   const [smtpConfig, setSmtpConfig] = useState<{
     providerName: string;
@@ -7395,10 +7396,12 @@ ${followUpStr}
           <div className="p-6 overflow-y-auto space-y-5 text-left">
             {/* Attendees */}
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              <h4 className="text-[11px] font-bold text-slate-400 tracking-wider uppercase mb-2">
                 Authorized Members & Attendees
               </h4>
-              <div className="flex flex-wrap gap-2">
+              
+              {/* Member Badges */}
+              <div className="flex flex-wrap gap-2 mb-3">
                 {(selectedViewingThread.allowedEmails || []).concat(
                   (selectedViewingThread.attendees || []).map((a: any) => typeof a === "string" ? a : a?.email || a?.name)
                 ).filter((val: any, idx: number, self: any[]) => Boolean(val) && self.indexOf(val) === idx)
@@ -7407,6 +7410,35 @@ ${followUpStr}
                     {att}
                   </span>
                 ))}
+              </div>
+
+              {/* Inline Add/Invite Input */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="email"
+                  value={modalInviteEmail}
+                  onChange={(e) => setModalInviteEmail(e.target.value)}
+                  placeholder="Invite collaborator (e.g. colleague@company.com)..."
+                  className="flex-1 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 placeholder:text-slate-500"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && modalInviteEmail.trim() && selectedViewingThread?.id) {
+                      handleAddMemberByEmailWithInvite(selectedViewingThread.id, modalInviteEmail);
+                      setModalInviteEmail("");
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (modalInviteEmail.trim() && selectedViewingThread?.id) {
+                      handleAddMemberByEmailWithInvite(selectedViewingThread.id, modalInviteEmail);
+                      setModalInviteEmail("");
+                    }
+                  }}
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition shadow-sm cursor-pointer"
+                >
+                  + Invite
+                </button>
               </div>
             </div>
 
