@@ -249,18 +249,36 @@ export default function App() {
     }
     return false;
   });
- const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => {
-    const savedSession = localStorage.getItem("app_session_user");
-    if (savedSession) {
-      try {
+// --- Current User Email & Session State with Persistent Storage ---
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const direct = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
+      if (direct && direct !== "unassigned" && direct.trim()) {
+        return direct.trim();
+      }
+      const savedSession = localStorage.getItem("app_session_user") || localStorage.getItem("cadence_user_session");
+      if (savedSession) {
         const parsed = JSON.parse(savedSession);
-        if (parsed?.email) return parsed.email;
-      } catch (e) { }
+        if (parsed?.email && parsed.email !== "unassigned") return parsed.email.trim();
+      }
+    } catch (e) {
+      console.error("Failed to read session on init:", e);
     }
-    const saved = localStorage.getItem("cadence_active_identity") || localStorage.getItem("m_synchron_active_identity");
-    if (saved && saved !== "unassigned") return saved;
     return "";
   });
+
+  // Automatically sync state updates to localStorage so refreshes remember the session
+  useEffect(() => {
+    if (!currentUserEmail || currentUserEmail === "unassigned") return;
+    try {
+      localStorage.setItem("cadence_active_identity", currentUserEmail);
+      localStorage.setItem("m_synchron_active_identity", currentUserEmail);
+      localStorage.setItem("app_session_user", JSON.stringify({ email: currentUserEmail, lastActive: new Date().toISOString() }));
+    } catch (e) {
+      console.error("Failed to sync session state to localStorage:", e);
+    }
+  }, [currentUserEmail]);
 
   const [driveUser, setDriveUser] = useState<any>(null);
 
@@ -498,12 +516,13 @@ export default function App() {
         if (user?.email) {
           const userEmail = user.email.toLowerCase();
           setCurrentUserEmail(userEmail);
+          localStorage.setItem("cadence_active_identity", userEmail);
         }
       },
       () => {
         setDriveUser(null);
         setDriveAccessToken(null);
-        setCurrentUserEmail("");
+        // Do not force-clear currentUserEmail here so persistent sessions survive page refresh
       }
     );
     return () => {
@@ -1235,7 +1254,7 @@ export default function App() {
     // Fallback: If thread is unowned / legacy local thread
     return !thread.ownerEmail;
   };
-// --- Add Member & Trigger Automated System Email (cadencedesk@gmail.com) ---
+// --- Add Member & Silent Automated System Email ---
   const handleAddMemberByEmailWithInvite = async (threadId: string, emailInput: string) => {
     const cleanEmail = emailInput.trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1268,7 +1287,7 @@ export default function App() {
       console.error("Storage persistence error:", e);
     }
 
-    // 2. Automated Dispatch from cadencedesk@gmail.com
+    // 2. Dispatch via Background System Route
     try {
       const response = await fetch("/api/send-invite", {
         method: "POST",
@@ -1280,13 +1299,15 @@ export default function App() {
         }),
       });
 
-      if (response.ok) {
-        alert(`✓ Access granted and invite notification emailed to ${cleanEmail} from cadencedesk@gmail.com!`);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        alert(`✓ Access granted! Invitation emailed directly to ${cleanEmail} from cadencedesk@gmail.com.`);
       } else {
-        alert(`✓ Access granted to ${cleanEmail} inside Cadence Desk!`);
+        alert(`✓ Access granted in Cadence Desk!\n\nEmail Dispatch Note: ${data.error || "Could not dispatch email. Check Vercel serverless logs."}`);
       }
-    } catch (err) {
-      alert(`✓ Access granted to ${cleanEmail} inside Cadence Desk!`);
+    } catch (err: any) {
+      alert(`✓ Access granted in Cadence Desk!\n\n(Network request failed: ${err?.message || err})`);
     }
   };
 
